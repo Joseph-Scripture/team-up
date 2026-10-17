@@ -1,0 +1,35 @@
+{
+  "name": "teamup",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon index.js",
+    "migrate:dev": "prisma migrate dev && npm run db:verify-extras",
+    "migrate:deploy": "prisma migrate deploy && npm run db:verify-extras",
+    "db:extras": "prisma db execute --file prisma/extras/migration_extras.sql",
+    "db:verify-extras": "prisma db execute --file prisma/extras/verify_extras.sql"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^18.0.7",
+    "express": "^5.3.0",
+    "express-validator": "^7.3.2",
+    "pg": "^8.23.1",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "jsonwebtoken": "^9.0.3",
+    "nodemon": "^3.1.14",
+    "prisma": "^7.10.0"
+  }
+}

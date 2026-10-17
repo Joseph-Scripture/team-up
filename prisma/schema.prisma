@@ -1,0 +1,774 @@
+
+
+
+// =====================================================================
+// Teamup — Prisma schema v2 (hardened)
+//
+// DATABASE HARDENING WORKFLOW (read before touching migrations)
+//
+// Two tiers of database hardening exist:
+//
+//   A. DECLARED IN THIS FILE — plain indexes Prisma can express
+//      (including the GIN trigram indexes below via `type: Gin, ops:`).
+//      Prisma creates and preserves them; nothing to guard.
+//
+//   B. NOT EXPRESSIBLE IN PSL — partial unique indexes, CHECK
+//      constraints and expression/partial GIN indexes. They live in
+//      prisma/extras/migration_extras.sql AND are physically part of
+//      migration history (appended to the initial
+//      20261013092151_teamup_v2/migration.sql), so every migration
+//      replay — shadow DB in `migrate dev`, `migrate deploy` on a fresh
+//      database — recreates them. Verified empirically: Prisma 7's
+//      schema diff ignores these unrepresentable objects, so it never
+//      generates drop migrations for them.
+//
+// The GUARD (all wired into npm scripts):
+//   - npm run db:verify-extras  — asserts every tier-B object exists
+//     (prisma/extras/verify_extras.sql). Runs automatically after
+//     migrate:dev and migrate:deploy, and in CI: a Prisma upgrade, an
+//     edited migration or an accidental `db push` fails loudly instead
+//     of silently stripping the hardening.
+//   - npm run db:extras        — idempotent repair script
+//     (prisma/extras/migration_extras.sql, all IF NOT EXISTS).
+//
+// Rules:
+//   1. NEVER run `prisma db push` against a database that must keep the
+//      tier-B objects — db push syncs to schema.prisma exactly and
+//      drops everything it does not know about.
+//   2. New extra that Prisma CAN express -> declare it in this file.
+//   3. New extra Prisma CANNOT express -> add it idempotently to
+//      migration_extras.sql, append it to a new migration
+//      (`prisma migrate dev --create-only`, edit migration.sql,
+//      `prisma migrate dev`), and list it in verify_extras.sql.
+// =====================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -------------------- ENUMS --------------------
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum ProjectStatus {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  ENDED_EARLY
+  ARCHIVED
+}
+
+enum ProjectAccessRole {
+  OWNER
+  MANAGER
+  MEMBER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  RELEASED
+  LEFT
+}
+
+enum ProjectRoleStatus {
+  OPEN
+  CLOSED
+}
+
+enum RequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+enum MilestoneStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  IN_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ContributionStatus {
+  PENDING_REVIEW
+  CONFIRMED
+  CHANGES_REQUESTED
+}
+
+// A review can only decide; it can never be "pending".
+enum ReviewDecision {
+  CONFIRMED
+  CHANGES_REQUESTED
+}
+
+enum EvidenceType {
+  REPOSITORY
+  LIVE_DEMO
+  DOCUMENT
+  IMAGE
+  VIDEO
+  OTHER
+}
+
+enum NotificationType {
+  PROJECT_INVITATION
+  INVITATION_RESPONDED
+  JOIN_REQUEST
+  JOIN_REQUEST_DECIDED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  TASK_ASSIGNED
+  TASK_COMMENTED
+  TASK_DEADLINE
+  TASK_OVERDUE
+  MILESTONE_UPDATE
+  TEAM_UPDATE
+  CONTRIBUTION_REVIEW
+  PROJECT_COMPLETED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+enum AuthTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+// -------------------- USERS, AUTH AND SKILLS --------------------
+
+model User {
+  id           String  @id @default(cuid())
+  name         String  @db.VarChar(100)
+  // Always stored lower-cased by the service layer (enforced by CHECK in migration_extras.sql).
+  email        String  @unique @db.VarChar(255)
+  passwordHash String  @db.VarChar(255)
+
+  emailVerifiedAt DateTime? @db.Timestamptz(3)
+  lastLoginAt     DateTime? @db.Timestamptz(3)
+
+  headline     String? @db.VarChar(160)
+  bio          String? @db.Text
+  location     String? @db.VarChar(120)
+  timezone     String? @db.VarChar(64) // IANA name, e.g. "Africa/Douala"
+  avatarUrl    String? @db.VarChar(2048)
+  githubUrl    String? @db.VarChar(2048)
+  portfolioUrl String? @db.VarChar(2048)
+
+  weeklyAvailabilityHours Int?
+  isAvailable             Boolean @default(true)
+  onboardingCompletedAt DateTime? @db.Timestamptz(3)
+  preferredProjectDurationWeeks Int?
+
+  role   UserRole   @default(USER)
+  status UserStatus @default(ACTIVE)
+
+  // Soft delete + anonymisation instead of hard delete (see review: onDelete strategy).
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  ownedProjects Project[]       @relation("ProjectOwner")
+  memberships   ProjectMember[]
+  skills        UserSkill[]
+
+  joinRequests        JoinRequest[]       @relation("JoinRequester")
+  reviewedRequests    JoinRequest[]       @relation("JoinReviewer")
+  sentInvitations     ProjectInvitation[] @relation("InvitationSender")
+  receivedInvitations ProjectInvitation[] @relation("InvitationRecipient")
+
+  createdTasks Task[]        @relation("TaskCreator")
+  taskComments TaskComment[]
+  teamUpdates  TeamUpdate[]
+
+  contributionReviews ContributionReview[] @relation("ContributionReviewer")
+  projectEvidence     ProjectEvidence[]    @relation("EvidenceCreator")
+
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
+  activityLogs            ActivityLog[]
+
+  sessions   Session[]
+  authTokens AuthToken[]
+
+  @@index([status])
+  @@index([location])
+}
+
+// Refresh-token sessions. Store only a HASH of the token.
+model Session {
+  id        String  @id @default(cuid())
+  userId    String
+  // Rotation family: if a revoked token from a family is replayed, revoke the whole family.
+  familyId  String  @db.VarChar(40)
+  tokenHash String  @unique @db.VarChar(128)
+
+  userAgent  String?   @db.VarChar(255)
+  ipAddress  String?   @db.VarChar(45)
+  lastUsedAt DateTime? @db.Timestamptz(3)
+  expiresAt  DateTime  @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
+}
+
+// One-time tokens: email verification, password reset. Store only a HASH.
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String
+  type      AuthTokenType
+  tokenHash String        @unique @db.VarChar(128)
+
+  expiresAt DateTime  @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
+}
+
+model Skill {
+  id       String  @id @default(cuid())
+  name     String  @unique @db.VarChar(80)
+  // Normalised (lower-case, hyphenated) so "React", "react" and "React.js" cannot coexist.
+  slug     String  @unique @db.VarChar(80)
+  category String? @db.VarChar(60)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  users    UserSkill[]
+  projects ProjectSkill[]
+  roles    RoleSkill[]
+
+  // Typo-tolerant skill search. Declared here so Prisma manages it.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Skill_name_trgm")
+}
+
+model UserSkill {
+  userId  String
+  skillId String
+  level   SkillLevel @default(BEGINNER)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([userId, skillId])
+  @@index([skillId, level])
+}
+
+model ProjectSkill {
+  projectId String
+  skillId   String
+  required  Boolean     @default(true)
+  minLevel  SkillLevel?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, skillId])
+  @@index([skillId, required])
+}
+
+model RoleSkill {
+  roleId   String
+  skillId  String
+  required Boolean     @default(true)
+  minLevel SkillLevel?
+
+  projectRole ProjectRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  skill       Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, skillId])
+  @@index([skillId])
+}
+
+// -------------------- PROJECTS AND TEAM ROLES --------------------
+
+model Project {
+  id          String  @id @default(cuid())
+  title       String  @db.VarChar(150)
+  slug        String  @unique @db.VarChar(160)
+  description String  @db.Text
+  problem     String? @db.Text
+  outcome     String? @db.Text
+
+  status ProjectStatus @default(DRAFT)
+
+  durationWeeks Int
+  weeklyHours   Int
+  startDate     DateTime? @db.Timestamptz(3)
+  targetEndDate DateTime? @db.Timestamptz(3)
+
+  // Lifecycle timestamps — set by the service on each status transition.
+  publishedAt DateTime? @db.Timestamptz(3)
+  completedAt DateTime? @db.Timestamptz(3)
+  endedAt     DateTime? @db.Timestamptz(3)
+  endedReason String?   @db.Text // required by the service when status = ENDED_EARLY
+
+  // Soft delete (admin take-down / owner delete). ARCHIVED is a lifecycle state, not a deletion.
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  ownerId String
+  owner   User   @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  skills        ProjectSkill[]
+  roles         ProjectRole[]
+  memberships   ProjectMember[]
+  joinRequests  JoinRequest[]
+  invitations   ProjectInvitation[]
+  milestones    Milestone[]
+  tasks         Task[]
+  updates       TeamUpdate[]
+  contributions Contribution[]
+  evidence      ProjectEvidence[]
+  notifications Notification[]
+  activityLogs  ActivityLog[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([status, publishedAt])
+  @@index([status, createdAt])
+  @@index([ownerId])
+  // Typo-tolerant title search. Declared here (not only in migration_extras.sql)
+  // so Prisma manages it and can never drop it as drift.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Project_title_trgm")
+}
+
+model ProjectRole {
+  id          String @id @default(cuid())
+  projectId   String
+  title       String @db.VarChar(100)
+  description String @db.Text
+
+  requiredMembers Int               @default(1)
+  status          ProjectRoleStatus @default(OPEN)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  skills       RoleSkill[]
+  memberships  ProjectMember[]
+  joinRequests JoinRequest[]
+  invitations  ProjectInvitation[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  // Needed as the target of composite "same-project" foreign keys.
+  @@unique([projectId, id])
+  @@unique([projectId, title])
+  @@index([projectId, status])
+}
+
+// One row per membership STINT. A user who leaves and later rejoins gets a new row,
+// so history (and the commitment they agreed to each time) is preserved.
+// "Only one ACTIVE row per (project, user)" is enforced by a partial unique index
+// in migration_extras.sql.
+model ProjectMember {
+  id        String  @id @default(cuid())
+  projectId String
+  userId    String
+  roleId    String?
+
+  accessRole ProjectAccessRole @default(MEMBER)
+  status     MembershipStatus  @default(ACTIVE)
+
+  committedHoursPerWeek Int?
+  acceptedCommitmentAt  DateTime? @db.Timestamptz(3)
+  // What the member agreed to at joining time. Validate with a versioned zod schema in code.
+  commitmentSnapshot    Json?
+
+  // Provenance: which request/invitation produced this membership.
+  joinRequestId String? @unique
+  invitationId  String? @unique
+
+  joinedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  endedAt   DateTime? @db.Timestamptz(3) // was releasedAt; now covers RELEASED and LEFT
+  endReason String?   @db.Text
+
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Composite FK guarantees the role belongs to the SAME project.
+  role    ProjectRole? @relation(fields: [projectId, roleId], references: [projectId, id], onDelete: NoAction)
+
+  joinRequest JoinRequest?       @relation(fields: [joinRequestId], references: [id], onDelete: SetNull)
+  invitation  ProjectInvitation? @relation(fields: [invitationId], references: [id], onDelete: SetNull)
+
+  contributions Contribution[]
+  assignedTasks Task[]         @relation("TaskAssignee")
+
+  @@unique([projectId, id])
+  @@index([projectId, userId])
+  @@index([userId, status])
+  @@index([projectId, status])
+  @@index([roleId, status])
+}
+
+// -------------------- JOIN REQUESTS AND INVITATIONS --------------------
+
+// Re-applying after DECLINED/WITHDRAWN is allowed. Only ONE PENDING request per
+// (project, requester) — partial unique index in migration_extras.sql.
+model JoinRequest {
+  id          String  @id @default(cuid())
+  projectId   String
+  requesterId String
+  roleId      String?
+  reviewerId  String?
+
+  message             String? @db.Text
+  proposedHoursPerWeek Int?
+  decisionNote        String? @db.Text
+  status              RequestStatus @default(PENDING)
+
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+  reviewedAt DateTime? @db.Timestamptz(3)
+
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requester User         @relation("JoinRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  reviewer  User?        @relation("JoinReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  role      ProjectRole? @relation(fields: [projectId, roleId], references: [projectId, id], onDelete: NoAction)
+
+  resultingMembership ProjectMember?
+
+  @@index([projectId, status])
+  @@index([requesterId, status])
+}
+
+// Only ONE PENDING invitation per (project, invitee) — partial unique index in migration_extras.sql.
+model ProjectInvitation {
+  id        String  @id @default(cuid())
+  projectId String
+  inviterId String
+  inviteeId String
+  roleId    String?
+
+  message              String?          @db.Text
+  proposedHoursPerWeek Int?
+  status               InvitationStatus @default(PENDING)
+
+  expiresAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  respondedAt DateTime? @db.Timestamptz(3)
+
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inviter User         @relation("InvitationSender", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User         @relation("InvitationRecipient", fields: [inviteeId], references: [id], onDelete: Cascade)
+  role    ProjectRole? @relation(fields: [projectId, roleId], references: [projectId, id], onDelete: NoAction)
+
+  resultingMembership ProjectMember?
+
+  @@index([inviteeId, status])
+  @@index([projectId, status])
+  @@index([expiresAt])
+}
+
+// -------------------- MILESTONES AND TASKS --------------------
+
+model Milestone {
+  id          String  @id @default(cuid())
+  projectId   String
+  title       String  @db.VarChar(150)
+  description String? @db.Text
+
+  dueDate     DateTime?       @db.Timestamptz(3)
+  completedAt DateTime?       @db.Timestamptz(3)
+  status      MilestoneStatus @default(TODO)
+  sortOrder   Int             @default(0)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   Task[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([projectId, id])
+  @@index([projectId, status])
+  @@index([projectId, sortOrder])
+  @@index([dueDate])
+}
+
+model Task {
+  id          String  @id @default(cuid())
+  projectId   String
+  milestoneId String?
+  createdById String
+  // Assignee is a project MEMBER (not a bare user), so a non-member can never be assigned.
+  // The service clears this when the member leaves/is released.
+  assigneeMemberId String?
+
+  title       String  @db.VarChar(200)
+  description String? @db.Text
+  blockerNote String? @db.Text // only meaningful when status = BLOCKED
+
+  status         TaskStatus   @default(TODO)
+  priority       TaskPriority @default(MEDIUM)
+  sortOrder      Int          @default(0) // position within a board column
+  estimatedHours Int?
+  dueDate        DateTime?    @db.Timestamptz(3)
+  startedAt      DateTime?    @db.Timestamptz(3)
+  completedAt    DateTime?    @db.Timestamptz(3)
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Composite FKs guarantee milestone/assignee belong to the SAME project.
+  milestone Milestone? @relation(fields: [projectId, milestoneId], references: [projectId, id], onDelete: NoAction)
+  assignee  ProjectMember? @relation("TaskAssignee", fields: [projectId, assigneeMemberId], references: [projectId, id], onDelete: NoAction)
+
+  createdBy User @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  comments      TaskComment[]
+  contributions Contribution[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([projectId, id])
+  @@index([projectId, status, sortOrder])
+  @@index([assigneeMemberId, status])
+  @@index([dueDate, status])
+  @@index([milestoneId])
+}
+
+model TaskComment {
+  id       String @id @default(cuid())
+  taskId   String
+  authorId String
+  content  String @db.Text
+
+  editedAt  DateTime? @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([taskId, createdAt])
+  @@index([authorId])
+}
+
+model TeamUpdate {
+  id        String @id @default(cuid())
+  projectId String
+  authorId  String
+  content   String @db.Text
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([projectId, createdAt])
+  @@index([authorId])
+}
+
+// -------------------- CONTRIBUTIONS AND PORTFOLIO EVIDENCE --------------------
+
+// A member's claim of work done. The contributor is derived through memberId
+// (no duplicated userId that could disagree with the member row).
+// A task may have many contributions, including resubmissions after CHANGES_REQUESTED.
+model Contribution {
+  id        String  @id @default(cuid())
+  projectId String
+  memberId  String
+  taskId    String?
+
+  title       String  @db.VarChar(200)
+  description String? @db.Text
+
+  status      ContributionStatus @default(PENDING_REVIEW)
+  submittedAt DateTime           @default(now()) @db.Timestamptz(3)
+  confirmedAt DateTime?          @db.Timestamptz(3)
+
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  member  ProjectMember @relation(fields: [projectId, memberId], references: [projectId, id], onDelete: NoAction)
+  task    Task?         @relation(fields: [projectId, taskId], references: [projectId, id], onDelete: NoAction)
+
+  reviews  ContributionReview[]
+  evidence ContributionEvidence[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([projectId, status])
+  @@index([memberId, status])
+  @@index([taskId])
+}
+
+// Append-only review history. Contribution.status mirrors the latest decision.
+// The service must forbid reviewer = contributor.
+model ContributionReview {
+  id             String         @id @default(cuid())
+  contributionId String
+  reviewerId     String
+  decision       ReviewDecision
+  note           String?        @db.Text
+
+  contribution Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+  reviewer     User         @relation("ContributionReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([contributionId, createdAt])
+  @@index([reviewerId])
+}
+
+// Replaces the single Contribution.evidenceUrl string: a contribution can have several proofs.
+model ContributionEvidence {
+  id             String       @id @default(cuid())
+  contributionId String
+  title          String?      @db.VarChar(150)
+  url            String       @db.VarChar(2048)
+  type           EvidenceType @default(OTHER)
+
+  contribution Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([contributionId])
+}
+
+model ProjectEvidence {
+  id          String       @id @default(cuid())
+  projectId   String
+  createdById String
+  title       String       @db.VarChar(150)
+  description String?      @db.Text
+  url         String       @db.VarChar(2048)
+  type        EvidenceType @default(OTHER)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("EvidenceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([projectId, createdAt])
+  @@index([createdById])
+}
+
+// -------------------- NOTIFICATIONS AND AUDIT --------------------
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  projectId String?
+  type      NotificationType
+
+  // Deep-link target, e.g. entityType "task", entityId "<task id>".
+  entityType String? @db.VarChar(40)
+  entityId   String?
+  title      String  @db.VarChar(200)
+  message    String  @db.Text
+  data       Json?
+  // Makes scheduled jobs idempotent, e.g. "task-overdue:<taskId>:2026-10-13".
+  dedupeKey  String? @db.VarChar(160)
+
+  readAt  DateTime? @db.Timestamptz(3)
+  emailedAt DateTime? @db.Timestamptz(3)
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, createdAt])
+  @@index([projectId])
+}
+
+model NotificationPreference {
+  userId  String
+  type    NotificationType
+  channel NotificationChannel
+  enabled Boolean             @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type, channel])
+}
+
+// Append-only audit/activity trail: status changes, membership changes, reviews, admin actions.
+// Never updated; archive or partition by createdAt once it grows.
+model ActivityLog {
+  id         String  @id @default(cuid())
+  projectId  String?
+  actorId    String?
+  // Dotted verb, e.g. "task.status_changed", "member.released", "project.completed".
+  action     String  @db.VarChar(64)
+  entityType String  @db.VarChar(40)
+  entityId   String
+  metadata   Json?   // e.g. { "from": "TODO", "to": "IN_PROGRESS" }
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor   User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([projectId, createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+}
+
+// END
