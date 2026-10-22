@@ -1,6 +1,6 @@
 @baseUrl = http://localhost:4000
-@accessToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXZjYWxzMGkwMDAyOXpqd2EzaTduMHk0Iiwic2lkIjoiY212Y2FtaWhtMDAwNDl6anc1em83MjVwaSIsImlhdCI6MTc5MjIzNTMwMywiZXhwIjoxNzkyMjM2MjAzfQ.DaymM4uZZ5hdyE3qyhr8-wld5wRzo6eicg0cxNYSYZs"
-@refreshCookie = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXZjYWxzMGkwMDAyOXpqd2EzaTduMHk0Iiwic2lkIjoiY212Y2FuM2xtMDAwNTl6and3OTQ2aDZvciIsImlhdCI6MTc5MjIzNTMzMCwiZXhwIjoxNzkyMjM2MjMwfQ.hP7VbA2XLrnrYdGNLGe0l2531V2XVr7YA74vINQatlo
+@accessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXZjYWxzMGkwMDAyOXpqd2EzaTduMHk0Iiwic2lkIjoiY212amU2bnQ2MDAwOWU1andmanRhb2hhdyIsImlhdCI6MTc5MjY2NDU0NSwiZXhwIjoxNzkyNjY1NDQ1fQ.Vl_-dZwFJd3msC13kSdCuMBYQQYY-F6HSaoSqy0jK-8"
+@refreshCookie = "q3yfzPASrcSC3RuuJwNGnnYN1By4juWjLZt4_m0Jq84"
 
 # TeamUP API request collection
 # Before using this file, start the API with: npm run dev
@@ -98,6 +98,11 @@ Authorization: Bearer {{accessToken}}
 #   &category=AI  => exact case-insensitive category match
 # Example: /api/profile/skills?q=react&category=Frontend
 GET {{baseUrl}}/api/profile/skills?q=react&category=Frontend
+# 688895242
+###
+# list all skills in the db
+
+GET {{baseUrl}}/api/profile/skills?category=BACKEND
 
 ###
 # Get current authenticated user's profile
@@ -151,3 +156,104 @@ Content-Type: application/json
     { "skillId": "<paste valid skill id from /api/profile/skills>", "level": "INTERMEDIATE" }
   ]
 }
+
+###
+# ── PROJECT ENDPOINTS ────────────────────────────────────────────────────────
+
+###
+# Create a new project draft (Step 1 — title only is enough to save a draft)
+# Needed: bearer token
+# Response: 201 with the created project (status: DRAFT)
+POST {{baseUrl}}/api/projects
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Campus Marketplace",
+  "problem": "Students struggle to exchange campus items across scattered group chats.",
+  "description": "Build a responsive campus marketplace prototype with listings, item details and sign-up.",
+  "projectType": "WEB_APPLICATION",
+  "outcome": "A responsive marketplace prototype with sign-up, item browsing and a documented build.",
+  "teamSize": 3,
+  "skills": [
+    { "skillId": "<paste skill id>", "minLevel": "BEGINNER" }
+  ]
+}
+
+###
+# Update a draft (save progress at any wizard step)
+# Needed: bearer token, project id from the create response
+# Response: 200 with the updated project
+PUT {{baseUrl}}/api/projects/<paste-project-id>
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "durationWeeks": 6,
+  "startDate": "2026-10-19T00:00:00.000Z",
+  "targetEndDate": "2026-11-30T00:00:00.000Z",
+  "availabilityExpectation": "Weekday evenings; Saturday afternoon",
+  "availabilityResponseExpectation": "Agree a response window before starting. Suggested: weekday evenings.",
+  "roles": [
+    {
+      "title": "Product Manager",
+      "description": "Define user stories and coordinate prototype review",
+      "hoursPerWeek": 5,
+      "skills": [
+        { "skillId": "<paste skill id>", "minLevel": "BEGINNER" }
+      ]
+    },
+    {
+      "title": "UI/UX Designer",
+      "description": "Design onboarding, prototype the sign-up flow and provide a UI handoff.",
+      "hoursPerWeek": 6,
+      "skills": [
+        { "skillId": "<paste skill id>", "minLevel": "BEGINNER" }
+      ]
+    },
+    {
+      "title": "Frontend Developer",
+      "description": "Implement authentication screens and marketplace discovery.",
+      "hoursPerWeek": 8,
+      "skills": [
+        { "skillId": "<paste skill id>", "minLevel": "BEGINNER" }
+      ]
+    }
+  ],
+  "milestones": [
+    { "title": "Requirements", "dueDate": "2026-11-02T00:00:00.000Z" },
+    { "title": "Working prototype", "dueDate": "2026-11-16T00:00:00.000Z" },
+    { "title": "Final demo", "dueDate": "2026-11-30T00:00:00.000Z" }
+  ]
+}
+
+###
+# Publish a draft (DRAFT → OPEN) — all fields must be complete
+# Needed: bearer token, project id
+# Response: 200 with the published project (status: OPEN, publishedAt set)
+POST {{baseUrl}}/api/projects/<paste-project-id>/publish
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{}
+
+###
+# Get a single project by ID
+# Needed: bearer token (drafts only visible to owner)
+# Response: 200 with full project detail
+GET {{baseUrl}}/api/projects/<paste-project-id>
+Authorization: Bearer {{accessToken}}
+
+###
+# List all projects owned by the logged-in user (drafts + published)
+# Needed: bearer token
+# Response: 200 with array of projects
+GET {{baseUrl}}/api/projects/mine
+Authorization: Bearer {{accessToken}}
+
+###
+# Delete a project (soft delete)
+# Needed: bearer token, must be the owner
+# Response: 200 confirmation
+DELETE {{baseUrl}}/api/projects/<paste-project-id>
+Authorization: Bearer {{accessToken}}
