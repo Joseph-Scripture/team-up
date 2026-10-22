@@ -23,7 +23,28 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
   : NODE_ENV === "production"
     ? ["https://teamup-lattice-project.netlify.app"]
-    : ["https://teamup-lattice-project.netlify.app", "http://localhost:5173", "http://localhost:3000"];
+    : [
+        "https://teamup-lattice-project.netlify.app",
+
+        // Vite (default + overflow ports)
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+
+        // Create React App
+        "http://localhost:3000",
+
+        // Next.js
+        "http://localhost:3001",
+
+        // Live Server (VS Code extension) — both variants
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+
+        // Generic fallbacks
+        "http://localhost:4173", // Vite preview
+        "http://localhost:8080", // webpack-dev-server
+      ];
 
 export default {
   NODE_ENV,
