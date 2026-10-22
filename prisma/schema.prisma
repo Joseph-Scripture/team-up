@@ -80,6 +80,16 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+enum ProjectType {
+  WEB_APPLICATION
+  MOBILE_APP
+  DESKTOP_APP
+  API_SERVICE
+  DATA_SCIENCE
+  DESIGN
+  OTHER
+}
+
 enum ProjectAccessRole {
   OWNER
   MANAGER
@@ -196,6 +206,8 @@ model User {
 
   headline     String? @db.VarChar(160)
   bio          String? @db.Text
+  // What the user wants to learn/achieve in the project (onboarding "Goals").
+  goals        String? @db.Text
   location     String? @db.VarChar(120)
   timezone     String? @db.VarChar(64) // IANA name, e.g. "Africa/Douala"
   avatarUrl    String? @db.VarChar(2048)
@@ -351,12 +363,20 @@ model Project {
   problem     String? @db.Text
   outcome     String? @db.Text
 
-  status ProjectStatus @default(DRAFT)
+  status      ProjectStatus @default(DRAFT)
+  projectType ProjectType?
+
+  // Team size intent captured during project creation (step 1 of the wizard).
+  teamSize Int?
 
   durationWeeks Int
   weeklyHours   Int
   startDate     DateTime? @db.Timestamptz(3)
   targetEndDate DateTime? @db.Timestamptz(3)
+
+  // Commitment screen fields — free-text expectations set by the owner.
+  availabilityExpectation         String? @db.Text
+  availabilityResponseExpectation String? @db.Text
 
   // Lifecycle timestamps — set by the service on each status transition.
   publishedAt DateTime? @db.Timestamptz(3)
@@ -364,7 +384,6 @@ model Project {
   endedAt     DateTime? @db.Timestamptz(3)
   endedReason String?   @db.Text // required by the service when status = ENDED_EARLY
 
-  // Soft delete (admin take-down / owner delete). ARCHIVED is a lifecycle state, not a deletion.
   deletedAt DateTime? @db.Timestamptz(3)
 
   ownerId String
@@ -401,6 +420,8 @@ model ProjectRole {
   description String @db.Text
 
   requiredMembers Int               @default(1)
+  // Expected weekly time commitment for anyone filling this role (set during project creation).
+  hoursPerWeek    Int?
   status          ProjectRoleStatus @default(OPEN)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

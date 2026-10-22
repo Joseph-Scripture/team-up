@@ -1,0 +1,153 @@
+@baseUrl = http://localhost:4000
+@accessToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXZjYWxzMGkwMDAyOXpqd2EzaTduMHk0Iiwic2lkIjoiY212Y2FtaWhtMDAwNDl6anc1em83MjVwaSIsImlhdCI6MTc5MjIzNTMwMywiZXhwIjoxNzkyMjM2MjAzfQ.DaymM4uZZ5hdyE3qyhr8-wld5wRzo6eicg0cxNYSYZs"
+@refreshCookie = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXZjYWxzMGkwMDAyOXpqd2EzaTduMHk0Iiwic2lkIjoiY212Y2FuM2xtMDAwNTl6and3OTQ2aDZvciIsImlhdCI6MTc5MjIzNTMzMCwiZXhwIjoxNzkyMjM2MjMwfQ.hP7VbA2XLrnrYdGNLGe0l2531V2XVr7YA74vINQatlo
+
+# TeamUP API request collection
+# Before using this file, start the API with: npm run dev
+# The app listens on http://localhost:4000.
+#
+# Required values for protected endpoints:
+# - Copy the "token" value from the signup/login response into @accessToken.
+# - Copy the "teamup_rt" cookie value from the Set-Cookie header in the signup/login response into @refreshCookie.
+# - For refresh/logout requests, the cookie is sent as: Cookie: teamup_rt={{refreshCookie}}
+# - For all authenticated routes, use: Authorization: Bearer {{accessToken}}
+
+###
+# Health check / welcome page
+# Needed: none
+# Format: plain GET request to the root endpoint
+GET {{baseUrl}}/
+
+###
+# Sign up a new user
+# Needed: no authentication
+# Format:
+#   {
+#     "username": "string",
+#     "email": "valid email",
+#     "password": "8+ chars, max 72 bytes"
+#   }
+# Response: 201 with a JWT access token in the body and a refresh cookie in the Set-Cookie header.
+POST {{baseUrl}}/api/auth/signup
+Content-Type: application/json
+
+{
+  "username": "Ada Lovelace",
+  "email": "ada@example.com",
+  "password": "Password123!"
+}
+
+###
+# Log in an existing user
+# Needed: no authentication
+# Format:
+#   {
+#     "email": "registered email",
+#     "password": "valid password"
+#   }
+# Response: 200 with a JWT access token in the body and a refresh cookie in the Set-Cookie header.
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "ada@example.com",
+  "password": "Password123!"
+}
+
+###
+# Refresh the access token using the refresh cookie
+# Needed: valid refresh token in the cookie jar or header
+# Format: cookie header only, no request body
+# Example cookie: Cookie: teamup_rt=<refresh-token>
+# Response: 200 with a new JWT access token and a rotated refresh cookie.
+POST {{baseUrl}}/api/auth/refresh
+Cookie: teamup_rt={{refreshCookie}}
+
+###
+# Log out the current device/session family
+# Needed: either a valid refresh cookie OR a valid bearer token
+# Format: either
+#   - Cookie: teamup_rt=<refresh-token>
+#   - or Authorization: Bearer <access-token>
+# Response: 200 with a logout confirmation.
+POST {{baseUrl}}/api/auth/logout
+Authorization: Bearer {{accessToken}}
+Cookie: teamup_rt={{refreshCookie}}
+
+###
+# Log out every device/session for the current user
+# Needed: bearer token only
+# Format: Authorization: Bearer <access-token>
+# Response: 200 with revoked session count.
+POST {{baseUrl}}/api/auth/logout-all
+Authorization: Bearer {{accessToken}}
+
+###
+# List the user's active sessions
+# Needed: bearer token only
+# Format: Authorization: Bearer <access-token>
+# Response: 200 with an array of active sessions and a current flag.
+GET {{baseUrl}}/api/auth/sessions
+Authorization: Bearer {{accessToken}}
+
+###
+# List skills from the catalogue
+# Needed: none
+# Format: GET with optional query params
+#   ?q=react      => partial case-insensitive name match
+#   &category=AI  => exact case-insensitive category match
+# Example: /api/profile/skills?q=react&category=Frontend
+GET {{baseUrl}}/api/profile/skills?q=react&category=Frontend
+
+###
+# Get current authenticated user's profile
+# Needed: bearer token only
+# Format: Authorization: Bearer <access-token>
+# Response: 200 with the full profile object.
+GET {{baseUrl}}/api/profile/users/me
+Authorization: Bearer {{accessToken}}
+
+###
+# Save/complete onboarding profile
+# Needed: bearer token only
+# Format:
+#   {
+#     "headline": "string (optional)",
+#     "bio": "string (optional)",
+#     "goals": "string (required, 1-2000 chars)",
+#     "location": "string (optional)",
+#     "timezone": "IANA timezone name (optional)",
+#     "githubUrl": "https://... (optional)",
+#     "portfolioUrl": "https://... (optional)",
+#     "weeklyAvailabilityHours": 0-168 (required),
+#     "preferredProjectDurationWeeks": 1-52 (required),
+#     "isAvailable": true/false,
+#     "skills": [
+#       { "skillId": "skill UUID", "level": "BEGINNER|INTERMEDIATE|ADVANCED|EXPERT" }
+#     ]
+#   }
+# Notes:
+# - goals, weeklyAvailabilityHours, preferredProjectDurationWeeks and skills are required.
+# - skills is required and must contain 1 to 50 items.
+# - skillId values must match IDs returned by /api/profile/skills.
+# - Every selected skill is replaced in one transaction.
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXY4NGJmeXgwMDAweXdqd3VxbjBkeG8zIiwiaWF0IjoxNzkxOTgyOTM3LCJleHAiOjE3OTE5ODY1Mzd9.nwLwk7t9qjZEJbg-Fa91zW6n_cCwUq63F6-Y5sWOgx0PUT {{baseUrl}}/api/profile/users/me/onboarding
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "headline": "Senior software engineer building team platforms",
+  "bio": "I build APIs, manage product delivery, and help teams ship faster.",
+  "goals": "Practice defining requirements and coordinating a small product team.",
+  "location": "Cameroon",
+  "timezone": "Africa/Douala",
+  "githubUrl": "https://github.com/ada",
+  "portfolioUrl": "https://portfolio.example.com",
+  "weeklyAvailabilityHours": 12,
+  "preferredProjectDurationWeeks": 6,
+  "isAvailable": true,
+  "skills": [
+    { "skillId": "<paste valid skill id from /api/profile/skills>", "level": "ADVANCED" },
+    { "skillId": "<paste valid skill id from /api/profile/skills>", "level": "INTERMEDIATE" }
+  ]
+}
