@@ -20,7 +20,7 @@ const NODE_ENV = process.env.NODE_ENV ?? "development";
 //   ALLOWED_ORIGINS=https://teamup-lattice-project.netlify.app,http://localhost:5173
 // Defaults to the Netlify frontend in production, localhost:5173 in development.
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim().replace(/\/$/, ""))
   : NODE_ENV === "production"
     ? ["https://teamup-lattice-project.netlify.app"]
     : [
