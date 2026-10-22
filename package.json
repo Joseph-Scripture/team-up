@@ -7,6 +7,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "prisma generate",
+    "postinstall": "prisma generate",
     "start": "node index.js",
     "dev": "nodemon index.js",
     "migrate:dev": "prisma migrate dev && npm run db:verify-extras",
