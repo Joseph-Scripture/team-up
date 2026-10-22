@@ -3,7 +3,8 @@ import { authenticate } from "../middleware/authenticate.js";
 import { onboardingRules,  } from "../middleware/authMiddleware.js";
 import { getMe, completeOnboarding } from "../controllers/profileController.js";
 import { validate } from "../middleware/validateResults.js";
-import { listSkills } from "../services/skills.js";
+import { getSkills } from "../controllers/skillController.js";
+import { skillQueryRules } from "../middleware/skillMiddleware.js";
 
 const router = Router();
 
@@ -13,6 +14,15 @@ const router = Router();
  *   get:
  *     tags: [Profile]
  *     summary: List available skills
+ *     parameters:
+ *       - in: query
+ *         name: q
+ *         schema: { type: string, maxLength: 80 }
+ *         description: Case-insensitive partial match on the skill name.
+ *       - in: query
+ *         name: category
+ *         schema: { type: string, maxLength: 60 }
+ *         description: Exact, case-insensitive category match.
  *     responses:
  *       200:
  *         description: Skills in the catalogue, ordered by category and name
@@ -30,9 +40,10 @@ const router = Router();
  *                       name: { type: string }
  *                       slug: { type: string }
  *                       category: { type: string, nullable: true }
+ *       400: { description: Invalid query parameters }
  *       500: { description: Internal server error }
  */
-router.get("/skills", listSkills);
+router.get("/skills", skillQueryRules, validate, getSkills);
 
 /**
  * @openapi
@@ -59,12 +70,14 @@ router.get("/skills", listSkills);
  *                     role: { type: string, enum: [USER, ADMIN] }
  *                     headline: { type: string, nullable: true }
  *                     bio: { type: string, nullable: true }
+ *                     goals: { type: string, nullable: true }
  *                     location: { type: string, nullable: true }
  *                     timezone: { type: string, nullable: true }
  *                     githubUrl: { type: string, nullable: true }
  *                     portfolioUrl: { type: string, nullable: true }
  *                     avatarUrl: { type: string, nullable: true }
  *                     weeklyAvailabilityHours: { type: integer, nullable: true }
+ *                     preferredProjectDurationWeeks: { type: integer, nullable: true }
  *                     isAvailable: { type: boolean }
  *                     onboardingCompleted: { type: boolean }
  *                     skills:
@@ -90,7 +103,7 @@ router.get("/users/me", authenticate, getMe);
  * /api/profile/users/me/onboarding:
  *   put:
  *     tags: [Profile]
- *     summary: Complete the post-signup profile (skills, availability, links)
+ *     summary: Complete the post-signup profile (goals, skills, availability, links)
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -99,7 +112,7 @@ router.get("/users/me", authenticate, getMe);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [weeklyAvailabilityHours, skills]
+ *             required: [weeklyAvailabilityHours, goals, preferredProjectDurationWeeks, skills]
  *             properties:
  *               headline: { type: string, maxLength: 160 }
  *               bio: { type: string, maxLength: 2000 }
@@ -108,6 +121,8 @@ router.get("/users/me", authenticate, getMe);
  *               githubUrl: { type: string, format: uri }
  *               portfolioUrl: { type: string, format: uri }
  *               weeklyAvailabilityHours: { type: integer, minimum: 0, maximum: 168, example: 15 }
+ *               goals: { type: string, minLength: 1, maxLength: 2000, example: Practice defining requirements and coordinating a small product team. }
+ *               preferredProjectDurationWeeks: { type: integer, minimum: 1, maximum: 52, example: 6 }
  *               isAvailable: { type: boolean, example: true }
  *               skills:
  *                 type: array

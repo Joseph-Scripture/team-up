@@ -113,6 +113,20 @@ BEGIN
     ALTER TABLE "ProjectRole"
       ADD CONSTRAINT "ProjectRole_requiredMembers_chk" CHECK ("requiredMembers" >= 1);
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ProjectRole_hoursPerWeek_chk') THEN
+    ALTER TABLE "ProjectRole"
+      ADD CONSTRAINT "ProjectRole_hoursPerWeek_chk"
+        CHECK ("hoursPerWeek" IS NULL OR "hoursPerWeek" BETWEEN 1 AND 168);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Project_teamSize_chk') THEN
+    ALTER TABLE "Project"
+      ADD CONSTRAINT "Project_teamSize_chk"
+        CHECK ("teamSize" IS NULL OR "teamSize" >= 1);
+  END IF;
 END $$;
 
 DO $$

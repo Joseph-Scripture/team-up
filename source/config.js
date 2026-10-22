@@ -16,9 +16,19 @@ if (JWT_SECRET.length < 32) {
 
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 
+// Comma-separated list of allowed origins, e.g.:
+//   ALLOWED_ORIGINS=https://teamup-lattice-project.netlify.app,http://localhost:5173
+// Defaults to the Netlify frontend in production, localhost:5173 in development.
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+  : NODE_ENV === "production"
+    ? ["https://teamup-lattice-project.netlify.app"]
+    : ["https://teamup-lattice-project.netlify.app", "http://localhost:5173", "http://localhost:3000"];
+
 export default {
   NODE_ENV,
   isProduction: NODE_ENV === "production",
+  ALLOWED_ORIGINS,
 
   PORT: Number(process.env.PORT ?? 4000),
 

@@ -53,6 +53,8 @@ BEGIN
     'Project_dates_chk',
     'Project_endedReason_chk',
     'ProjectRole_requiredMembers_chk',
+    'ProjectRole_hoursPerWeek_chk',
+    'Project_teamSize_chk',
     'ProjectMember_hours_chk',
     'ProjectMember_endedAt_chk',
     'ProjectMember_dates_chk',

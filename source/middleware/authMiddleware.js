@@ -50,6 +50,12 @@ export const onboardingRules = [
   body("portfolioUrl").optional({ values: "null" }).isString().trim().isLength({ max: 2048 }).isURL(url)
     .withMessage("Enter a full URL starting with http:// or https://"),
   body("weeklyAvailabilityHours").isInt({ min: 0, max: 168 }).withMessage("Must be 0 to 168").toInt(),
+  body("goals")
+    .isString().withMessage("Goals are required").bail()
+    .trim()
+    .isLength({ min: 1, max: 2000 }).withMessage("Goals must be 1 to 2000 characters"),
+  body("preferredProjectDurationWeeks")
+    .isInt({ min: 1, max: 52 }).withMessage("Must be 1 to 52 weeks").toInt(),
   body("isAvailable").optional().isBoolean({ strict: true }).withMessage("Must be true or false").toBoolean(),
   body("skills").isArray({ min: 1, max: 50 }).withMessage("Select 1 to 50 skills"),
   body("skills.*.skillId").isString().trim().notEmpty().withMessage("skillId is required"),

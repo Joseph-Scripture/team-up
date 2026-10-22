@@ -29,6 +29,8 @@ tmp/
 .claude/
 .agents/
 .windsurf/
+.kilo/ACCESS_TOKEN_TTL
 skills-lock.json
 
 db.excalidraw
+services/request.http
