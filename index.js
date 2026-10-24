@@ -7,6 +7,7 @@ import config from "./source/config.js";
 import authRoutes from "./source/routes/authRoutes.js";
 import profileRoutes from "./source/routes/profileRoutes.js";
 import projectRoutes from "./source/routes/projectRoutes.js";
+import dashboardRoutes from "./source/routes/dashboardRoutes.js";
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/projects", projectRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 /**
  * @openapi

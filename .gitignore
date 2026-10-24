@@ -35,4 +35,7 @@ skills-lock.json
 db.excalidraw
 services/request.http
 request.http
+
+# Local CORS test page
+cors-test/
 .kilo/
