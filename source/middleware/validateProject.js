@@ -1,5 +1,5 @@
 import { validationResult } from "express-validator";
-import { saveDraftRules, publishRules } from "../validation/projectSchemas.js";
+import { saveDraftRules, updateDraftRules, publishRules } from "../validation/projectSchemas.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core checker — same shape as the existing validateResults middleware but
@@ -25,8 +25,11 @@ function check(req, res, next) {
 //   router.post("/:id/publish", validatePublish, PublishProject);
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Validates a Save-draft request (only title required). */
+/** Validates a create-draft request (title required). */
 export const validateDraft = [...saveDraftRules, check];
+
+/** Validates an update-draft request (everything optional — project already exists). */
+export const validateDraftUpdate = [...updateDraftRules, check];
 
 /** Validates a Publish request (all fields required). */
 export const validatePublish = [...publishRules, check];
