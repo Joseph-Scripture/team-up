@@ -3,10 +3,47 @@ import { authenticate } from "../middleware/authenticate.js";
 import { onboardingRules,  } from "../middleware/authMiddleware.js";
 import { getMe, completeOnboarding } from "../controllers/profileController.js";
 import { validate } from "../middleware/validateResults.js";
-import { getSkills } from "../controllers/skillController.js";
+import { getSkills, getCategories } from "../controllers/skillController.js";
 import { skillQueryRules } from "../middleware/skillMiddleware.js";
 
 const router = Router();
+
+/**
+ * @openapi
+ * /api/profile/skills/categories:
+ *   get:
+ *     tags: [Profile]
+ *     summary: List all skill categories
+ *     description: >
+ *       Returns the distinct, sorted list of category names from the skill catalogue.
+ *       Use this to populate the category picker in the onboarding flow, then call
+ *       GET /api/profile/skills?category=<name> to load skills for the chosen category.
+ *     responses:
+ *       200:
+ *         description: Sorted list of category names
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 categories:
+ *                   type: array
+ *                   items: { type: string }
+ *                   example:
+ *                     - "Business & Project Management"
+ *                     - "Cloud, DevOps & Cybersecurity"
+ *                     - "Data Analytics, Data Science & AI"
+ *                     - "Digital Marketing & Content"
+ *                     - "Graphic Design & Video Production"
+ *                     - "Product Design (UI/UX)"
+ *                     - "Product Management"
+ *                     - "QA & Software Testing"
+ *                     - "Software Development"
+ *       500: { description: Internal server error }
+ */
+// NOTE: /categories must be declared BEFORE /skills so Express does not treat
+// the literal string "categories" as a skill query with no filters.
+router.get("/skills/categories", getCategories);
 
 /**
  * @openapi

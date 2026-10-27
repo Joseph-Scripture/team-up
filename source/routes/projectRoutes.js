@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/authenticate.js";
-import { validateDraft, validatePublish } from "../middleware/validateProject.js";
+import { validateDraft, validateDraftUpdate, validatePublish } from "../middleware/validateProject.js";
 import {
   CreateDraft,
   UpdateDraft,
@@ -9,6 +9,7 @@ import {
   GetProject,
   DeleteProject,
 } from "../controllers/projectController.js";
+import { GetRecommendedProjects } from "../controllers/dashboardController.js";
 
 const router = Router();
 
@@ -28,7 +29,27 @@ router.use(authenticate);
  *       401: { description: Authentication required }
  */
 
+// NOTE: /mine and /recommended must be declared BEFORE /:id so Express does
+// not treat the literal strings "mine" or "recommended" as project IDs.
 router.get("/mine", GetMyProjects);
+
+/**
+ * @openapi
+ * /api/projects/recommended:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get personalised project recommendations
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 20, default: 6 }
+ *     responses:
+ *       200: { description: Ranked recommendations }
+ *       401: { description: Authentication required }
+ */
+router.get("/recommended", GetRecommendedProjects);
 
 /**
  * @openapi
@@ -71,7 +92,7 @@ router.get("/:id", GetProject);
  *         required: true
  *         schema: { type: string }
  */
-router.put("/:id", validateDraft, UpdateDraft);
+router.put("/:id", validateDraftUpdate, UpdateDraft);
 
 /**
  * @openapi

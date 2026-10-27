@@ -1,37 +1,58 @@
-# Dependencies
+# ─── Dependencies ────────────────────────────────────────────────────────────
 node_modules/
 
-# Environment variables — keep secrets out of version control
+# ─── Environment variables ───────────────────────────────────────────────────
+# Never commit real secrets. .env.example (no secrets) IS committed.
 .env
 .env.*
 !.env.example
 
-# Prisma generated client
+# ─── Prisma generated client ─────────────────────────────────────────────────
+# Prisma 7 writes the client into src/generated/prisma by default.
 src/generated/
 
-# Logs
+# ─── Logs ────────────────────────────────────────────────────────────────────
 logs/
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# OS / editor files
+# ─── OS / editor artefacts ───────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+
+# ─── IDE config (personal preference — not project config) ───────────────────
 .idea/
 .vscode/
-*.swp
 
-# Coverage / misc
+# ─── Test / coverage output ──────────────────────────────────────────────────
 coverage/
 tmp/
+dist/
 
-# AI agent tooling
-.claude/
+# ─── AI agent tooling ────────────────────────────────────────────────────────
+# These directories are managed by IDE AI assistants and are not source code.
 .agents/
+.claude/
 .windsurf/
-.kilo/ACCESS_TOKEN_TTL
+.kilo/
 skills-lock.json
 
+# ─── Local dev / scratch files ───────────────────────────────────────────────
+# CORS browser test page — useful locally, not part of the application.
+cors-test/
+
+# HTTP request scratch files — contain tokens; never commit.
+**/*.http
+**/*.rest
+
+# DB schema diagram — kept locally, not needed in CI.
 db.excalidraw
-services/request.http
-request.http
+
+# Reference documents dropped into the repo root during development.
+*.docx
+*.pdf
+*.xlsx

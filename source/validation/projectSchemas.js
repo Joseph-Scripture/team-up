@@ -153,8 +153,7 @@ const sharedRules = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// saveDraftRules — only title is required; everything else is optional.
-// Used on every "Save draft" action at any step of the wizard.
+// saveDraftRules — title required. Used by POST /api/projects (create).
 // ─────────────────────────────────────────────────────────────────────────────
 export const saveDraftRules = [
   body("title")
@@ -169,6 +168,12 @@ export const saveDraftRules = [
     return !fields.includes("title");
   }),
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// updateDraftRules — everything optional. Used by PUT /api/projects/:id.
+// The project already exists so title does not need to be re-sent.
+// ─────────────────────────────────────────────────────────────────────────────
+export const updateDraftRules = [...sharedRules];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // publishRules — all fields required to transition DRAFT → OPEN.

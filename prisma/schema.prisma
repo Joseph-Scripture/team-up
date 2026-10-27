@@ -1,47 +1,4 @@
 
-
-
-// =====================================================================
-// Teamup — Prisma schema v2 (hardened)
-//
-// DATABASE HARDENING WORKFLOW (read before touching migrations)
-//
-// Two tiers of database hardening exist:
-//
-//   A. DECLARED IN THIS FILE — plain indexes Prisma can express
-//      (including the GIN trigram indexes below via `type: Gin, ops:`).
-//      Prisma creates and preserves them; nothing to guard.
-//
-//   B. NOT EXPRESSIBLE IN PSL — partial unique indexes, CHECK
-//      constraints and expression/partial GIN indexes. They live in
-//      prisma/extras/migration_extras.sql AND are physically part of
-//      migration history (appended to the initial
-//      20261013092151_teamup_v2/migration.sql), so every migration
-//      replay — shadow DB in `migrate dev`, `migrate deploy` on a fresh
-//      database — recreates them. Verified empirically: Prisma 7's
-//      schema diff ignores these unrepresentable objects, so it never
-//      generates drop migrations for them.
-//
-// The GUARD (all wired into npm scripts):
-//   - npm run db:verify-extras  — asserts every tier-B object exists
-//     (prisma/extras/verify_extras.sql). Runs automatically after
-//     migrate:dev and migrate:deploy, and in CI: a Prisma upgrade, an
-//     edited migration or an accidental `db push` fails loudly instead
-//     of silently stripping the hardening.
-//   - npm run db:extras        — idempotent repair script
-//     (prisma/extras/migration_extras.sql, all IF NOT EXISTS).
-//
-// Rules:
-//   1. NEVER run `prisma db push` against a database that must keep the
-//      tier-B objects — db push syncs to schema.prisma exactly and
-//      drops everything it does not know about.
-//   2. New extra that Prisma CAN express -> declare it in this file.
-//   3. New extra Prisma CANNOT express -> add it idempotently to
-//      migration_extras.sql, append it to a new migration
-//      (`prisma migrate dev --create-only`, edit migration.sql,
-//      `prisma migrate dev`), and list it in verify_extras.sql.
-// =====================================================================
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
