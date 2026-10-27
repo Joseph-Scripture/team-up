@@ -49,7 +49,7 @@ const swaggerSpec = swaggerJsdoc({
       version: "1.0.0",
       description: "REST API for the TeamUP collaborative project platform",
     },
-    servers: [{ url: `http://localhost:${config.PORT}` }],
+    servers: [{ url: `http://localhost:${config.PORT}` }, {url: 'https://teamup-lattice-project.netlify.app'}],
     components: {
       securitySchemes: {
         bearerAuth: {

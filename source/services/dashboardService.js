@@ -196,18 +196,37 @@ function calculateProjectSkillScore(userSkills, projectSkills) {
 }
 
 /**
- * Availability score — soft signal, not a hard filter.
- * A user who can't commit the full hours still gets a partial score.
+ * Availability score — hard filter below 50 % of required hours, soft signal above.
+ *
+ * Hard filter: if the user can commit less than half the role's required hours,
+ * return null to signal that this role should be excluded entirely.
+ * Callers must check for null and skip the role before scoring.
+ *
+ * Soft signal (≥ 50 % of required hours): score scales from 8 → 15.
+ * Exact match or above earns the full 15 pts.
+ *
+ * Edge cases:
+ *  - user.isAvailable === false   → null (hard exclude)
+ *  - role has no hoursPerWeek     → 7 pts (neutral, no filter applied)
+ *  - user has no weeklyAvailabilityHours → 5 pts (neutral, no filter applied)
+ *
  * Max 15 points.
  */
 function calculateAvailabilityScore(user, role) {
-  if (!user.isAvailable) return 0;
+  if (!user.isAvailable) return null;
   const expectedHours = role.hoursPerWeek;
   if (expectedHours == null) return 7; // role has no hours set — neutral
-  if (user.weeklyAvailabilityHours == null) return 5; // user hasn't specified — small neutral
-  if (user.weeklyAvailabilityHours >= expectedHours) return 15;
+  if (user.weeklyAvailabilityHours == null) return 5; // user hasn't specified — neutral
   if (expectedHours <= 0) return 15;
-  return Math.round((user.weeklyAvailabilityHours / expectedHours) * 15);
+
+  // Hard filter: user can commit less than half the required hours.
+  if (user.weeklyAvailabilityHours < expectedHours / 2) return null;
+
+  if (user.weeklyAvailabilityHours >= expectedHours) return 15;
+
+  // Soft signal: scale 8–14 pts proportionally between 50 % and 100 % coverage.
+  const coverage = user.weeklyAvailabilityHours / expectedHours; // 0.5 … <1.0
+  return Math.round(8 + (coverage - 0.5) * 2 * (15 - 8));
 }
 
 /**
@@ -240,6 +259,7 @@ function calculateLocationScore(user, project) {
 
 /**
  * Score one open role against the user's profile.
+ * Returns null if the role fails a hard filter (availability).
  *
  * Role skill match:   max 40 pts
  * Availability match: max 15 pts
@@ -253,16 +273,27 @@ function calculateLocationScore(user, project) {
  * capped at 20 pts, bringing the overall maximum to 100.
  */
 function scoreRole(user, project, role) {
-  const roleSkillMatch = calculateRoleSkillMatch(user.skills, role.skills);
   const availabilityScore = calculateAvailabilityScore(user, role);
+
+  // Hard filter — user cannot meet the minimum hour commitment for this role.
+  if (availabilityScore === null) return null;
+
+  const roleSkillMatch = calculateRoleSkillMatch(user.skills, role.skills);
   const durationScore = calculateDurationScore(user, project);
   const locationScore = calculateLocationScore(user, project);
   const recencyScore = getRecencyScore(project.publishedAt);
 
-  const score = Math.min(
-    80,
-    roleSkillMatch.score + availabilityScore + durationScore + locationScore + recencyScore
-  );
+  // When the role has required skills, apply a skill-match multiplier so that
+  // non-skill signals (availability, recency, duration) cannot push a role with
+  // 0% required-skill coverage above roles the user actually qualifies for.
+  // Roles with no skills defined are unaffected (multiplier = 1).
+  const hasRequiredSkills = role.skills.some((rs) => rs.required);
+  const skillMultiplier = hasRequiredSkills
+    ? roleSkillMatch.percentage / 100
+    : 1;
+
+  const rawScore = roleSkillMatch.score + availabilityScore + durationScore + locationScore + recencyScore;
+  const score = Math.min(80, Math.round(rawScore * skillMultiplier));
 
   return {
     ...role,
@@ -372,21 +403,37 @@ export async function getRecommendedProjects(userId, userContext, limit = DEFAUL
   const recommendations = [];
 
   for (const project of candidates) {
-    // Only consider roles that still have open slots.
+    // Only consider roles that still have open slots AND have at least one
+    // skill defined. A role with no skills is incomplete data — recommending
+    // it would surface projects purely on availability/recency signals with
+    // no skill relevance, which produces misleading results.
     const availableRoles = project.roles.filter(
-      (role) => role.memberships.length < role.requiredMembers
+      (role) =>
+        role.memberships.length < role.requiredMembers &&
+        role.skills.length > 0
     );
     if (availableRoles.length === 0) continue;
 
-    // Score each available role independently.
+    // Score each available role independently. scoreRole returns null when a
+    // role fails a hard filter (e.g. user can't meet the hour commitment).
     const scoredRoles = availableRoles
       .map((role) => scoreRole(userWithSkills, project, role))
+      .filter((role) => role !== null)
       .sort((a, b) => b.matchScore - a.matchScore);
+
+    // If every role in this project was hard-filtered out, skip the project.
+    if (scoredRoles.length === 0) continue;
 
     const bestRole = scoredRoles[0];
 
     // Project-level skill bonus applied once here — NOT inside scoreRole —
     // to avoid double-counting. Contributes up to 20 pts.
+    //
+    // Only applied when the best role has a non-zero score. A project where
+    // every role scored 0 (no skill match) should not be surfaced purely
+    // because the user shares a project-level skill tag.
+    if (bestRole.matchScore === 0) continue;
+
     const projectSkillBonus = calculateProjectSkillScore(userWithSkills.skills, project.skills);
 
     const finalScore = Math.min(100, bestRole.matchScore + projectSkillBonus);

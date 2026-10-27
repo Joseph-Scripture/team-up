@@ -216,7 +216,7 @@ export function setRefreshCookie(res, refreshToken) {
   res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
     httpOnly: true,
     secure: config.isProduction,
-    sameSite: "lax", // blocks cross-site POSTs => CSRF on /refresh & /logout
+    sameSite: "None", // blocks cross-site POSTs => CSRF on /refresh & /logout
     path: "/api/auth", // only sent to auth endpoints
     maxAge: refreshTtlMs(),
   });
