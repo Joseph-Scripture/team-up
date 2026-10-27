@@ -212,11 +212,13 @@ export async function listActiveSessions(userId, currentSessionId) {
 // refresh token, so an XSS bug cannot steal sessions).
 // ---------------------------------------------------------------------
 
+const SAME_SITE = config.isProduction ? "None" : "Lax";
+
 export function setRefreshCookie(res, refreshToken) {
   res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
     httpOnly: true,
-    secure: config.isProduction,
-    sameSite: "None", // blocks cross-site POSTs => CSRF on /refresh & /logout
+    secure: config.isProduction, // None requires secure=true; Lax does not
+    sameSite: SAME_SITE,
     path: "/api/auth", // only sent to auth endpoints
     maxAge: refreshTtlMs(),
   });
@@ -226,7 +228,7 @@ export function clearRefreshCookie(res) {
   res.clearCookie(REFRESH_COOKIE_NAME, {
     httpOnly: true,
     secure: config.isProduction,
-    sameSite: "lax",
+    sameSite: SAME_SITE, // must match setRefreshCookie exactly or the browser treats them as different cookies
     path: "/api/auth",
   });
 }
