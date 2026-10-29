@@ -8,6 +8,8 @@ import authRoutes from "./source/routes/authRoutes.js";
 import profileRoutes from "./source/routes/profileRoutes.js";
 import projectRoutes from "./source/routes/projectRoutes.js";
 import dashboardRoutes from "./source/routes/dashboardRoutes.js";
+import invitationRoutes, { inviteeRouter } from "./source/routes/invitationRoutes.js";
+import notificationRoutes from "./source/routes/notificationRoutes.js";
 
 const app = express();
 
@@ -76,6 +78,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/invitations", inviteeRouter);
+app.use("/api/notifications", notificationRoutes);
 
 /**
  * @openapi

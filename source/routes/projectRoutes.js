@@ -10,6 +10,10 @@ import {
   DeleteProject,
 } from "../controllers/projectController.js";
 import { GetRecommendedProjects } from "../controllers/dashboardController.js";
+import { FindCollaborators } from "../controllers/invitationController.js";
+import { findCollaboratorsRules } from "../middleware/validateInvitation.js";
+import { validate } from "../middleware/validateResults.js";
+import invitationRoutes from "./invitationRoutes.js";
 
 const router = Router();
 
@@ -61,6 +65,36 @@ router.get("/recommended", GetRecommendedProjects);
  *       - bearerAuth: []
  */
 router.post("/", validateDraft, CreateDraft);
+
+/**
+ * @openapi
+ * /api/projects/{projectId}/collaborators:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Find eligible collaborators for an open role
+ *     description: >
+ *       Owner / manager only. Returns active onboarded users that are not yet
+ *       members and have no pending invitation or join request for this project.
+ *       Accepts optional filters for skills, project type, preferred duration and
+ *       weekly availability. Always returns a top-level `count` of matching users.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: roleId
+ *         required: true
+ *         schema: { type: string }
+ */
+router.get(
+  "/:projectId/collaborators",
+  findCollaboratorsRules,
+  validate,
+  FindCollaborators,
+);
 
 /**
  * @openapi
@@ -125,5 +159,12 @@ router.post("/:id/publish", validatePublish, PublishProject);
  *         schema: { type: string }
  */
 router.delete("/:id", DeleteProject);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped invitation routes
+// Mounts: POST/GET /api/projects/:projectId/invitations
+// The :projectId param is forwarded via mergeParams in the sub-router.
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId/invitations", invitationRoutes);
 
 export default router;
