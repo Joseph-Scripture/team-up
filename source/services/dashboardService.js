@@ -84,6 +84,10 @@ const DASHBOARD_PROJECT_INCLUDE = {
       dueDate: true,
       sortOrder: true,
       _count: { select: { tasks: true } },
+      // Prisma does not support a filtered _count in select, so we load
+      // a minimal projection of tasks and count in JS — one extra column,
+      // no extra round-trip.
+      tasks: { select: { status: true } },
     },
   },
   _count: {
@@ -580,6 +584,7 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
           assignee: {
             select: {
               id: true,
+              user: { select: { id: true, name: true, avatarUrl: true } },
               role: { select: { id: true, title: true } },
             },
           },
@@ -600,6 +605,12 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
         include: {
           project: { select: { id: true, title: true, slug: true } },
           milestone: { select: { id: true, title: true } },
+          assignee: {
+            select: {
+              id: true,
+              user: { select: { id: true, name: true, avatarUrl: true } },
+            },
+          },
         },
       }),
 
@@ -615,10 +626,17 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
         take: 10,
         include: {
           project: {
-            select: { id: true, title: true, slug: true, description: true, status: true },
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              description: true,
+              status: true,
+              durationWeeks: true,
+            },
           },
           inviter: { select: { id: true, name: true, avatarUrl: true } },
-          role: { select: { id: true, title: true, hoursPerWeek: true } },
+          role: { select: { id: true, title: true, description: true, hoursPerWeek: true } },
         },
       }),
     ]);
@@ -648,6 +666,11 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
 
   const withTaskCounts = (project) => ({
     ...project,
+    milestones: project.milestones.map(({ tasks, _count, ...m }) => ({
+      ...m,
+      taskCount: _count.tasks,
+      completedTaskCount: tasks.filter((t) => t.status === "COMPLETED").length,
+    })),
     taskCounts: {
       TODO: 0,
       IN_PROGRESS: 0,
@@ -681,7 +704,13 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
     view: hasActiveWork ? "PROJECTS" : "DISCOVERY",
     ownedProjects: ownedWithCounts,
     memberProjects: memberWithCounts,
-    attentionTasks,
+    attentionTasks: attentionTasks.map((t) => ({
+      ...t,
+      daysOverdue:
+        t.dueDate && t.status !== "COMPLETED" && t.status !== "CANCELLED"
+          ? Math.max(0, Math.floor((now.getTime() - new Date(t.dueDate).getTime()) / (1000 * 60 * 60 * 24)))
+          : null,
+    })),
     upcomingTasks,
     pendingInvitations,
     recommendedProjects,
@@ -693,3 +722,6 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
     },
   };
 }
+
+
+// 

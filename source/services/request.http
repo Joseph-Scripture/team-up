@@ -136,7 +136,7 @@ Authorization: Bearer {{accessToken}}
 # - skills is required and must contain 1 to 50 items.
 # - skillId values must match IDs returned by /api/profile/skills.
 # - Every selected skill is replaced in one transaction.
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXY4NGJmeXgwMDAweXdqd3VxbjBkeG8zIiwiaWF0IjoxNzkxOTgyOTM3LCJleHAiOjE3OTE5ODY1Mzd9.nwLwk7t9qjZEJbg-Fa91zW6n_cCwUq63F6-Y5sWOgx0PUT {{baseUrl}}/api/profile/users/me/onboarding
+PUT {{baseUrl}}/api/profile/users/me/onboarding
 Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
@@ -256,4 +256,33 @@ Authorization: Bearer {{accessToken}}
 # Needed: bearer token, must be the owner
 # Response: 200 confirmation
 DELETE {{baseUrl}}/api/projects/<paste-project-id>
+Authorization: Bearer {{accessToken}}
+
+###
+# ── INVITATION ENDPOINTS ─────────────────────────────────────────────────────
+
+###
+# Find Collaborators for an open role
+# Needed: bearer token — requester must be the project owner or a MANAGER
+#
+# Required query params:
+#   roleId        — the ID of an OPEN role on this project
+#
+# Optional filters (combine any or all):
+#   skills[]      — one or more skill IDs; user must have at least one
+#   projectType   — WEB_APPLICATION | MOBILE_APP | DESKTOP_APP | API_SERVICE | DATA_SCIENCE | DESIGN | OTHER
+#   durationWeeks — preferred project length in weeks; matches users within ±4 weeks of their preference
+#   weeklyHours   — required weekly hours; user must be available for at least half this value
+#   page          — page number (default 1)
+#   limit         — results per page (default 20, max 50)
+#
+# Response:
+#   {
+#     "count": <total matching users>,
+#     "role": { "id": "...", "title": "..." },
+#     "users": [ { id, name, headline, avatarUrl, location, isAvailable,
+#                  weeklyAvailabilityHours, preferredProjectDurationWeeks, skills } ],
+#     "pagination": { "total", "page", "limit", "totalPages" }
+#   }
+GET {{baseUrl}}/api/projects/<paste-project-id>/collaborators?roleId=<paste-role-id>&skills[]=<paste-skill-id>&projectType=WEB_APPLICATION&durationWeeks=6&weeklyHours=8&page=1&limit=20
 Authorization: Bearer {{accessToken}}

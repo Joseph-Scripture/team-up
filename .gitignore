@@ -56,3 +56,5 @@ db.excalidraw
 *.docx
 *.pdf
 *.xlsx
+prisma/seed-dashboard-test.js
+prisma/seed.js
