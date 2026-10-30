@@ -452,10 +452,11 @@ model JoinRequest {
   roleId      String?
   reviewerId  String?
 
-  message             String? @db.Text
+  message              String? @db.Text
   proposedHoursPerWeek Int?
-  decisionNote        String? @db.Text
-  status              RequestStatus @default(PENDING)
+  plannedTaskDeadlines String? @db.Text
+  decisionNote         String? @db.Text
+  status               RequestStatus @default(PENDING)
 
   createdAt  DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt  DateTime  @updatedAt @db.Timestamptz(3)

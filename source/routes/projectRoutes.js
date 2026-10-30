@@ -14,6 +14,7 @@ import { FindCollaborators } from "../controllers/invitationController.js";
 import { findCollaboratorsRules } from "../middleware/validateInvitation.js";
 import { validate } from "../middleware/validateResults.js";
 import invitationRoutes from "./invitationRoutes.js";
+import joinRequestRoutes from "./joinRequestRoutes.js";
 
 const router = Router();
 
@@ -166,5 +167,14 @@ router.delete("/:id", DeleteProject);
 // The :projectId param is forwarded via mergeParams in the sub-router.
 // ─────────────────────────────────────────────────────────────────────────────
 router.use("/:projectId/invitations", invitationRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped join request routes
+// Mounts: POST/GET /api/projects/:projectId/join-requests
+//         POST     /api/projects/:projectId/join-requests/:requestId/approve|decline
+//         GET      /api/projects/:projectId/join-requests/:requestId
+// The :projectId param is forwarded via mergeParams in the sub-router.
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId/join-requests", joinRequestRoutes);
 
 export default router;
