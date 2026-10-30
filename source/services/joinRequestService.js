@@ -478,6 +478,12 @@ export async function confirmJoinRequest(requesterId, requestId) {
       },
     });
 
+    // Serialize admissions for a role before counting memberships. Concurrent
+    // confirmations must observe each other's committed membership.
+    if (request?.roleId) {
+      await tx.$queryRaw`SELECT "id" FROM "ProjectRole" WHERE "id" = ${request.roleId} FOR UPDATE`;
+    }
+
     if (!request) throw new JoinRequestError("Join request not found", 404);
 
     // ── b. Must belong to the requester ──────────────────────────────────────

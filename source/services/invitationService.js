@@ -233,6 +233,11 @@ export async function acceptInvitation(userId, invitationId) {
       },
     });
 
+    // Serialize admissions for a role before counting memberships.
+    if (invitation?.roleId) {
+      await tx.$queryRaw`SELECT "id" FROM "ProjectRole" WHERE "id" = ${invitation.roleId} FOR UPDATE`;
+    }
+
     // ── b. Ownership check ──────────────────────────────────────────────────
     if (!invitation) throw new InvitationError("Invitation not found", 404);
     if (invitation.inviteeId !== userId) throw new InvitationError("Invitation not found", 404);
