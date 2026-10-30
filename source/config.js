@@ -22,9 +22,9 @@ const NODE_ENV = process.env.NODE_ENV ?? "development";
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim().replace(/\/$/, ""))
   : NODE_ENV === "production"
-    ? ["https://teamup-lattice-project.netlify.app"]
+    ? ["https://teamup-lattice-project.netlify.app,https://teamup-frontend-vert.vercel.app/"]
     : [
-        "https://teamup-lattice-project.netlify.app",
+        "https://teamup-lattice-project.netlify.app,https://teamup-frontend-vert.vercel.app/",
 
         // Vite (default + overflow ports)
         "http://localhost:5173",
