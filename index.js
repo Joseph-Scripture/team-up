@@ -11,6 +11,7 @@ import dashboardRoutes from "./source/routes/dashboardRoutes.js";
 import invitationRoutes, { inviteeRouter } from "./source/routes/invitationRoutes.js";
 import joinRequestRoutes, { requesterRouter } from "./source/routes/joinRequestRoutes.js";
 import notificationRoutes from "./source/routes/notificationRoutes.js";
+import uploadRoutes       from "./source/routes/uploadRoutes.js";
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/invitations", inviteeRouter);
 app.use("/api/join-requests", requesterRouter);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/uploads",       uploadRoutes);
 
 /**
  * @openapi

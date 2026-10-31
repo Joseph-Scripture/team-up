@@ -15,6 +15,7 @@ import { findCollaboratorsRules } from "../middleware/validateInvitation.js";
 import { validate } from "../middleware/validateResults.js";
 import invitationRoutes from "./invitationRoutes.js";
 import joinRequestRoutes from "./joinRequestRoutes.js";
+import taskRoutes        from "./taskRoutes.js";
 
 const router = Router();
 
@@ -176,5 +177,13 @@ router.use("/:projectId/invitations", invitationRoutes);
 // The :projectId param is forwarded via mergeParams in the sub-router.
 // ─────────────────────────────────────────────────────────────────────────────
 router.use("/:projectId/join-requests", joinRequestRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped task, milestone, and team update routes
+// Mounts: POST/GET /api/projects/:projectId/milestones
+//         POST/GET /api/projects/:projectId/tasks (+ /:taskId + comments)
+//         POST/GET /api/projects/:projectId/updates
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId", taskRoutes);
 
 export default router;
