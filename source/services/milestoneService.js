@@ -1,4 +1,5 @@
 import prisma from "../db/client.js";
+import { cacheDel, CacheKey } from "../lib/cache.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom error
@@ -67,9 +68,9 @@ async function assertMember(userId, projectId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function createMilestone(userId, projectId, { title, description, dueDate, sortOrder }) {
-  await assertOwnerOrManager(userId, projectId);
+  const project = await assertOwnerOrManager(userId, projectId);
 
-  return prisma.milestone.create({
+  const milestone = await prisma.milestone.create({
     data: {
       projectId,
       title:       title.trim(),
@@ -83,6 +84,12 @@ export async function createMilestone(userId, projectId, { title, description, d
       completedAt: true, createdAt: true,
     },
   });
+
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(project.ownerId),
+  );
+  return milestone;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,7 +116,7 @@ export async function listMilestones(userId, projectId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function updateMilestone(userId, projectId, milestoneId, fields) {
-  await assertOwnerOrManager(userId, projectId);
+  const project = await assertOwnerOrManager(userId, projectId);
 
   const milestone = await prisma.milestone.findFirst({
     where: { id: milestoneId, projectId },
@@ -132,7 +139,7 @@ export async function updateMilestone(userId, projectId, milestoneId, fields) {
     }
   }
 
-  return prisma.milestone.update({
+  const updated = await prisma.milestone.update({
     where:  { id: milestoneId },
     data,
     select: {
@@ -141,6 +148,12 @@ export async function updateMilestone(userId, projectId, milestoneId, fields) {
       completedAt: true, updatedAt: true,
     },
   });
+
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(project.ownerId),
+  );
+  return updated;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,7 +166,7 @@ export async function updateMilestone(userId, projectId, milestoneId, fields) {
  * task→milestone FK so we must unlink first.
  */
 export async function deleteMilestone(userId, projectId, milestoneId) {
-  await assertOwnerOrManager(userId, projectId);
+  const project = await assertOwnerOrManager(userId, projectId);
 
   const milestone = await prisma.milestone.findFirst({
     where: { id: milestoneId, projectId },
@@ -168,6 +181,11 @@ export async function deleteMilestone(userId, projectId, milestoneId) {
     }),
     prisma.milestone.delete({ where: { id: milestoneId } }),
   ]);
+
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(project.ownerId),
+  );
 
   return { message: "Milestone deleted. Linked tasks have been unlinked." };
 }

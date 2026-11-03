@@ -1,4 +1,8 @@
 import prisma from "../db/client.js";
+import {
+  cacheGet, cacheSet, withCache, cacheDel, cacheDelPattern,
+  CacheKey, TTL,
+} from "../lib/cache.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -169,6 +173,9 @@ export async function createDraft(ownerId, data) {
     },
   });
 
+  // Invalidate owner's project list — a new project appeared
+  await cacheDel(CacheKey.projectsMine(ownerId));
+
   return project;
 }
 
@@ -312,6 +319,12 @@ export async function updateDraft(projectId, ownerId, data) {
     });
   });
 
+  // Invalidate project detail and owner's list
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+
   return project;
 }
 
@@ -385,6 +398,14 @@ export async function publishProject(projectId, ownerId) {
     include: PROJECT_INCLUDE,
   });
 
+  // Publishing changes status — invalidate project detail, owner list,
+  // and all recommendation caches (new OPEN project may appear for others)
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
   return project;
 }
 
@@ -401,18 +422,21 @@ export async function publishProject(projectId, ownerId) {
  * @returns {object|null}
  */
 export async function getProjectById(projectId, requesterId = null) {
+  const cacheKey = CacheKey.project(projectId);
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: PROJECT_INCLUDE,
   });
 
   if (!project || project.deletedAt) return null;
-
-  // Drafts are private — only the owner can see them
-  if (project.status === "DRAFT" && project.ownerId !== requesterId) {
-    return null;
+  if (project.status === "DRAFT") {
+    return project.ownerId === requesterId ? project : null;
   }
 
+  await cacheSet(cacheKey, project, TTL.PROJECT);
   return project;
 }
 
@@ -429,14 +453,15 @@ export async function getProjectById(projectId, requesterId = null) {
  * @returns {object[]}
  */
 export async function getProjectsByOwner(ownerId) {
-  return prisma.project.findMany({
-    where: {
-      ownerId,
-      deletedAt: null,
-    },
-    include: PROJECT_INCLUDE,
-    orderBy: { createdAt: "desc" },
-  });
+  return withCache(CacheKey.projectsMine(ownerId), () =>
+    prisma.project.findMany({
+      where: {
+        ownerId,
+        deletedAt: null,
+      },
+      include: PROJECT_INCLUDE,
+      orderBy: { createdAt: "desc" },
+    }), TTL.PROJECTS_MINE);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -462,9 +487,17 @@ export async function deleteProject(projectId, ownerId) {
     throw new ProjectError("Only the project owner can delete this project", 403);
   }
 
-  return prisma.project.update({
+  const project = await prisma.project.update({
     where: { id: projectId },
     data: { deletedAt: new Date() },
     select: { id: true, title: true, deletedAt: true },
   });
+
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
+  return project;
 }
