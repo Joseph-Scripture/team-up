@@ -7,6 +7,8 @@ import {
   deleteProject,
   ProjectError,
 } from "../services/projectService.js";
+import redis from "../redis.js";
+import prisma from "../db/client.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -74,6 +76,16 @@ function handleError(res, error) {
 export async function CreateDraft(req, res) {
   try {
     const project = await createDraft(req.user.id, req.body);
+    
+    // REDIS: Write-through cache population & list invalidation
+    const cacheKey = `project:${project.id}`;
+    await redis.setex(cacheKey, 3600, JSON.stringify(project));
+    
+    const keys = await redis.keys("projects:*");
+    if (keys.length > 0) {
+      await redis.del(keys);
+    }
+
     return res.status(201).json({ message: "Draft created successfully", project });
   } catch (error) {
     return handleError(res, error);
@@ -115,6 +127,16 @@ export async function CreateDraft(req, res) {
 export async function UpdateDraft(req, res) {
   try {
     const project = await updateDraft(req.params.id, req.user.id, req.body);
+
+    // REDIS: Update cache & invalidate lists
+    const cacheKey = `project:${req.params.id}`;
+    await redis.setex(cacheKey, 3600, JSON.stringify(project));
+
+    const keys = await redis.keys("projects:*");
+    if (keys.length > 0) {
+      await redis.del(keys);
+    }
+
     return res.status(200).json({ message: "Draft updated successfully", project });
   } catch (error) {
     return handleError(res, error);
@@ -155,12 +177,20 @@ export async function UpdateDraft(req, res) {
  */
 export async function PublishProject(req, res) {
   try {
-    // First persist any last-minute body data onto the draft, then publish.
-    // This lets the final "Continue to commitment" step save + publish in one call.
     if (Object.keys(req.body).length > 0) {
       await updateDraft(req.params.id, req.user.id, req.body);
     }
     const project = await publishProject(req.params.id, req.user.id);
+
+    // REDIS: Update cache & invalidate lists upon publishing
+    const cacheKey = `project:${req.params.id}`;
+    await redis.setex(cacheKey, 3600, JSON.stringify(project));
+
+    const keys = await redis.keys("projects:*");
+    if (keys.length > 0) {
+      await redis.del(keys);
+    }
+
     return res.status(200).json({ message: "Project published successfully", project });
   } catch (error) {
     return handleError(res, error);
@@ -196,9 +226,21 @@ export async function PublishProject(req, res) {
  *       500: { description: Internal server error }
  */
 export async function GetMyProjects(req, res) {
+  const cacheKey = `projects:mine:${req.user.id}`;
+
   try {
+    // REDIS: Check cache first
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json({ source: "cache", projects: JSON.parse(cachedData) });
+    }
+
     const projects = await getProjectsByOwner(req.user.id);
-    return res.status(200).json({ projects });
+
+    // REDIS: Store result in cache
+    await redis.setex(cacheKey, 3600, JSON.stringify(projects));
+
+    return res.status(200).json({ source: "database", projects });
   } catch (error) {
     return handleError(res, error);
   }
@@ -233,12 +275,24 @@ export async function GetMyProjects(req, res) {
  *       500: { description: Internal server error }
  */
 export async function GetProject(req, res) {
+  const cacheKey = `project:${req.params.id}`;
+
   try {
+    // REDIS: Check cache first
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json({ source: "cache", project: JSON.parse(cachedData) });
+    }
+
     const project = await getProjectById(req.params.id, req.user.id);
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
-    return res.status(200).json({ project });
+
+    // REDIS: Store result in cache
+    await redis.setex(cacheKey, 3600, JSON.stringify(project));
+
+    return res.status(200).json({ source: "database", project });
   } catch (error) {
     return handleError(res, error);
   }
@@ -275,6 +329,14 @@ export async function GetProject(req, res) {
 export async function DeleteProject(req, res) {
   try {
     const result = await deleteProject(req.params.id, req.user.id);
+
+    // REDIS: Invalidate single item cache and lists upon deletion
+    await redis.del(`project:${req.params.id}`);
+    const keys = await redis.keys("projects:*");
+    if (keys.length > 0) {
+      await redis.del(keys);
+    }
+
     return res.status(200).json({ message: "Project deleted successfully", project: result });
   } catch (error) {
     return handleError(res, error);

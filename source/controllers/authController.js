@@ -17,7 +17,6 @@ export function Signup(req, res) {
 export function Login(req, res) {
     return login(req, res);
 }
-
 function handleSessionError(res, error) {
   if (error instanceof SessionError) {
     return res.status(error.status).json({ message: error.message });
