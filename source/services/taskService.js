@@ -154,19 +154,25 @@ export async function createTask(userId, projectId, {
     if (!ms) throw new TaskError("Milestone not found on this project", 404);
   }
 
+  // Issue 1 fix: if the task is created already COMPLETED, set completedAt.
+  const initialStatus = (status ?? "TODO").toUpperCase();
+  const now           = new Date();
+
   const task = await prisma.task.create({
     data: {
       projectId,
-      createdById:     userId,
-      title:           title.trim(),
-      description:     description     ?? null,
+      createdById:      userId,
+      title:            title.trim(),
+      description:      description      ?? null,
       assigneeMemberId: assigneeMemberId ?? null,
-      milestoneId:     milestoneId     ?? null,
-      dueDate:         dueDate         ?? null,
-      priority:        priority        ?? "MEDIUM",
-      estimatedHours:  estimatedHours  ?? null,
-      sortOrder:       sortOrder       ?? 0,
-      status:          status          ?? "TODO",
+      milestoneId:      milestoneId      ?? null,
+      dueDate:          dueDate          ?? null,
+      priority:         priority         ?? "MEDIUM",
+      estimatedHours:   estimatedHours   ?? null,
+      sortOrder:        sortOrder        ?? 0,
+      status:           initialStatus,
+      completedAt:      initialStatus === "COMPLETED" ? now : null,
+      startedAt:        initialStatus === "IN_PROGRESS" ? now : null,
     },
     select: TASK_SELECT,
   });
@@ -239,7 +245,8 @@ export async function listTasks(userId, projectId, {
     ...(effectiveAssigneeMemberId && { assigneeMemberId: effectiveAssigneeMemberId }),
   };
 
-  // Run page query + summary stats in parallel
+  // Issue 4 fix: summary stats are scoped to the same filters as the task list,
+  // not to the whole project. This ensures "2 of 6 Done" reflects the current view.
   const [tasks, total, doneCount, overdueCount] = await Promise.all([
     prisma.task.findMany({
       where,
@@ -249,23 +256,31 @@ export async function listTasks(userId, projectId, {
       select: TASK_SELECT,
     }),
     prisma.task.count({ where }),
-    prisma.task.count({ where: { projectId, status: "COMPLETED" } }),
+    prisma.task.count({
+      where: { AND: [where, { status: "COMPLETED" }] },
+    }),
     prisma.task.count({
       where: {
-        projectId,
-        dueDate: { lt: now },
-        status:  { notIn: ["COMPLETED", "CANCELLED"] },
+        AND: [
+          where,
+          {
+            dueDate: { lt: now },
+            status:  { notIn: ["COMPLETED", "CANCELLED"] },
+          },
+        ],
       },
     }),
   ]);
 
-  const totalCount = await prisma.task.count({ where: { projectId } });
+  // Total across the filtered scope (not the whole project).
+  // Callers that want project-wide stats can omit all filters.
+  const totalFiltered = total;
 
   return {
     summary: {
-      total:    totalCount,
+      total:    totalFiltered,
       done:     doneCount,
-      notDone:  totalCount - doneCount,
+      notDone:  totalFiltered - doneCount,
       overdue:  overdueCount,
     },
     tasks,
@@ -419,21 +434,32 @@ export async function updateTask(userId, projectId, taskId, fields) {
     }
   }
 
-  // ── Contribution block (only when marking COMPLETED) ─────────────────────
-  let createdContribution = null;
+  // ── Contribution block ────────────────────────────────────────────────────
+  // Issue 5 fix: only create a contribution on the specific update that
+  // transitions status TO COMPLETED. Subsequent updates on an already-completed
+  // task do NOT generate another contribution row.
+  let contributionData = null;
 
-  if (contribution && (newStatus === "COMPLETED" || task.status === "COMPLETED")) {
+  const transitioningToCompleted = newStatus === "COMPLETED" && task.status !== "COMPLETED";
+
+  if (contribution && newStatus !== "COMPLETED") {
+    throw new TaskError("A contribution can only be submitted when completing a task", 400);
+  }
+  if (contribution && !transitioningToCompleted) {
+    throw new TaskError("This task is already completed; create a separate resubmission flow for another contribution", 409);
+  }
+
+  if (contribution && transitioningToCompleted) {
     const { title: cTitle, completionNote, artifactUrl, fileUrl, fileType } = contribution;
 
-    // Resolve contributor's memberId
     const contributorMemberId = isAssignee
       ? memberId
-      : task.assigneeMemberId ?? memberId; // owner completing on behalf
+      : task.assigneeMemberId ?? memberId;
 
     if (contributorMemberId) {
       const evidenceRows = [];
       if (artifactUrl) {
-        evidenceRows.push({ url: artifactUrl, type: "LIVE_DEMO",  title: "Artifact link" });
+        evidenceRows.push({ url: artifactUrl, type: "LIVE_DEMO", title: "Artifact link" });
       }
       if (fileUrl) {
         evidenceRows.push({
@@ -443,17 +469,34 @@ export async function updateTask(userId, projectId, taskId, fields) {
         });
       }
 
-      createdContribution = await prisma.contribution.create({
+      contributionData = {
+        projectId,
+        memberId:    contributorMemberId,
+        taskId,
+        title:       cTitle?.trim() || task.title,
+        description: completionNote ?? null,
+        status:      "PENDING_REVIEW",
+        evidence:    evidenceRows,
+      };
+    }
+  }
+
+  // Issue 2 fix: task update and contribution creation run in one transaction
+  // so a failure in either leaves the database in a consistent state.
+  const { updatedTask, createdContribution } = await prisma.$transaction(async (tx) => {
+    const updated = await tx.task.update({
+      where:  { id: taskId },
+      data,
+      select: TASK_SELECT,
+    });
+
+    let contrib = null;
+    if (contributionData) {
+      const { evidence, ...rest } = contributionData;
+      contrib = await tx.contribution.create({
         data: {
-          projectId,
-          memberId:    contributorMemberId,
-          taskId,
-          title:       cTitle?.trim() || task.title,
-          description: completionNote ?? null,
-          status:      "PENDING_REVIEW",
-          evidence:    evidenceRows.length > 0
-            ? { create: evidenceRows }
-            : undefined,
+          ...rest,
+          evidence: evidence.length > 0 ? { create: evidence } : undefined,
         },
         select: {
           id: true, title: true, description: true, status: true,
@@ -461,13 +504,8 @@ export async function updateTask(userId, projectId, taskId, fields) {
         },
       });
     }
-  }
 
-  // ── Perform the update ────────────────────────────────────────────────────
-  const updatedTask = await prisma.task.update({
-    where:  { id: taskId },
-    data,
-    select: TASK_SELECT,
+    return { updatedTask: updated, createdContribution: contrib };
   });
 
   // ── Notify new assignee if assignment changed ─────────────────────────────
@@ -498,9 +536,6 @@ export async function updateTask(userId, projectId, taskId, fields) {
 
   return { task: updatedTask, contribution: createdContribution };
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// deleteTask
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function deleteTask(userId, projectId, taskId) {
@@ -512,8 +547,16 @@ export async function deleteTask(userId, projectId, taskId) {
   const task = await prisma.task.findFirst({ where: { id: taskId, projectId } });
   if (!task) throw new TaskError("Task not found", 404);
 
-  await prisma.task.delete({ where: { id: taskId } });
-  return { message: "Task deleted." };
+  // Contributions are portfolio records and use an ON DELETE NO ACTION foreign
+  // key. Preserve them while unlinking the deleted task in the same transaction.
+  await prisma.$transaction([
+    prisma.contribution.updateMany({
+      where: { projectId, taskId },
+      data: { taskId: null },
+    }),
+    prisma.task.delete({ where: { id: taskId } }),
+  ]);
+  return { message: "Task deleted. Linked contributions were preserved and unlinked." };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

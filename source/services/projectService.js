@@ -263,6 +263,18 @@ export async function updateDraft(projectId, ownerId, data) {
 
     // 3. Replace milestones if provided
     if (milestones !== undefined) {
+      // The draft editor sends a replacement list without stable milestone IDs.
+      // Once tasks reference milestones, deleting and recreating that list would
+      // either violate the foreign key or silently detach work from its plan.
+      const linkedTaskCount = await tx.task.count({
+        where: { projectId, milestoneId: { not: null } },
+      });
+      if (linkedTaskCount > 0) {
+        throw new ProjectError(
+          "Milestones with linked tasks must be managed individually through the milestone endpoints",
+          409,
+        );
+      }
       await tx.milestone.deleteMany({ where: { projectId } });
       if (milestones.length > 0) {
         await tx.milestone.createMany({

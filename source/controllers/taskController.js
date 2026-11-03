@@ -300,7 +300,9 @@ export async function UpdateTask(req, res) {
  *   delete:
  *     tags: [Tasks]
  *     summary: Delete a task
- *     description: Owner / Manager only. Cascades to comments and contributions.
+ *     description: >
+ *       Owner / Manager only. Comments are deleted with the task. Contributions
+ *       are preserved as portfolio records and unlinked from the deleted task.
  *     security:
  *       - bearerAuth: []
  *     parameters:
