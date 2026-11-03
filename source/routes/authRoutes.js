@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { Signup, Login, Refresh, Logout, LogoutAll, Sessions } from "../controllers/authController.js";
-import { signupRules, loginRules } from "../middleware/authMiddleware.js";
+import { Signup, Login, Refresh, Logout, LogoutAll, Sessions, ForgotPassword, ResetPassword } from "../controllers/authController.js";
+import { signupRules, loginRules, forgotPasswordRules, resetPasswordRules } from "../middleware/authMiddleware.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { validate } from "../middleware/validateResults.js";
 import { REFRESH_COOKIE_NAME } from "../services/sessionService.js";
@@ -101,6 +101,148 @@ route.post("/signup", signupRules, validate, Signup);
  *       500: { description: Internal server error }
  */
 route.post("/login", loginRules, validate, Login);
+
+/**
+ * @openapi
+ * /api/auth/forgot-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Request a password-reset email
+ *     description: >
+ *       Generates a single-use, time-limited reset token and emails a link
+ *       to the address. The response is always identical regardless of whether
+ *       the address is registered, so email addresses cannot be enumerated.
+ *
+ *       The link sent to the user's inbox points to:
+ *       `FRONTEND_URL/reset-password?token=<raw_token>`
+ *
+ *       The frontend should extract the token from the URL and submit it to
+ *       `POST /api/auth/reset-password` with the new password.
+ *
+ *       **Token lifetime:** controlled by the `PASSWORD_RESET_TTL_MINUTES`
+ *       environment variable (default 30 minutes). The token is single-use —
+ *       consuming it marks it as used and cleans up any other pending tokens
+ *       for the same account.
+ *
+ *       **SMTP required:** If `SMTP_URL` and `EMAIL_FROM` are not configured,
+ *       the request is silently accepted but no email is sent.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 maxLength: 255
+ *                 example: ada@example.com
+ *     responses:
+ *       202:
+ *         description: >
+ *           Request accepted. The same message is returned whether the address
+ *           is registered or not.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: >
+ *                     If an active account matches that email, a
+ *                     password-reset link has been sent.
+ *       400:
+ *         description: Validation error (invalid email format)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string, example: Invalid input }
+ *                 errors:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       field:   { type: string, example: email }
+ *                       message: { type: string, example: Invalid email address }
+ */
+route.post("/forgot-password", forgotPasswordRules, validate, ForgotPassword);
+
+/**
+ * @openapi
+ * /api/auth/reset-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Reset password using the one-time link token
+ *     description: >
+ *       Consumes the reset token from the email link, updates the password,
+ *       and revokes **all** active sessions so any stolen sessions are
+ *       invalidated immediately.
+ *
+ *       **Token rules:**
+ *       - Must be unused (each token is single-use).
+ *       - Must not have expired (lifetime set by `PASSWORD_RESET_TTL_MINUTES`).
+ *       - Submitting an already-used or expired token returns `400`.
+ *       - Concurrent double-submits are handled atomically — only one request
+ *         will succeed.
+ *
+ *       **After success:**
+ *       - The refresh-token cookie is cleared.
+ *       - All active sessions are revoked.
+ *       - The user must sign in again with the new password.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, password]
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: >
+ *                   The raw token from the reset link query parameter
+ *                   (?token=...). Do not hash or encode it — send it as-is.
+ *                 minLength: 32
+ *                 maxLength: 200
+ *                 example: dGhpcyBpcyBhIHNhbXBsZSB0b2tlbg
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 minLength: 8
+ *                 maxLength: 72
+ *                 description: The new password (max 72 bytes — bcrypt limit).
+ *                 example: NewSecurePassword123!
+ *     responses:
+ *       200:
+ *         description: Password changed and all sessions revoked
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Password reset successfully. Please sign in again.
+ *       400:
+ *         description: >
+ *           Invalid, expired, or previously used token — or validation error
+ *           on the password field.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Invalid or expired password reset link
+ *       500: { description: Internal server error }
+ */
+route.post("/reset-password", resetPasswordRules, validate, ResetPassword);
 
 /**
  * @openapi

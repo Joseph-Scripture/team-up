@@ -1,5 +1,10 @@
 import { signup, login } from "../services/userAuth.js";
 import {
+  requestPasswordReset,
+  resetPassword,
+  PasswordResetError,
+} from "../services/passwordResetService.js";
+import {
   rotateRefreshToken,
   revokeByRefreshToken,
   revokeBySessionId,
@@ -17,6 +22,8 @@ export function Signup(req, res) {
 export function Login(req, res) {
     return login(req, res);
 }
+
+const RESET_REQUEST_MESSAGE = "If an active account matches that email, a password-reset link has been sent.";
 function handleSessionError(res, error) {
   if (error instanceof SessionError) {
     return res.status(error.status).json({ message: error.message });
@@ -84,5 +91,32 @@ export async function Sessions(req, res) {
     return res.status(200).json({ sessions });
   } catch (error) {
     return handleSessionError(res, error);
+  }
+}
+
+/** Request a reset email without revealing whether an account exists. */
+export async function ForgotPassword(req, res) {
+  try {
+    await requestPasswordReset(req.body.email);
+  } catch (error) {
+    // Preserve the same response for known and unknown addresses. Operators can
+    // still diagnose an SMTP problem from the server log.
+    console.error("password-reset email failed:", error.message);
+  }
+  return res.status(202).json({ message: RESET_REQUEST_MESSAGE });
+}
+
+/** Consume a one-time reset token, update the password, and revoke sessions. */
+export async function ResetPassword(req, res) {
+  try {
+    await resetPassword(req.body.token, req.body.password);
+    clearRefreshCookie(res);
+    return res.status(200).json({ message: "Password reset successfully. Please sign in again." });
+  } catch (error) {
+    if (error instanceof PasswordResetError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    console.error("password reset failed:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 }
