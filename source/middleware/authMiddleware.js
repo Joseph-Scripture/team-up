@@ -33,6 +33,26 @@ export const loginRules = [
     .notEmpty().withMessage("Password is required"),
 ];
 
+export const forgotPasswordRules = [
+  body("email")
+    .isString().withMessage("Email is required").bail()
+    .trim()
+    .toLowerCase()
+    .isEmail().withMessage("Invalid email address")
+    .isLength({ max: 255 }).withMessage("Email is too long"),
+];
+
+export const resetPasswordRules = [
+  body("token")
+    .isString().withMessage("Reset token is required").bail()
+    .trim()
+    .isLength({ min: 32, max: 200 }).withMessage("Invalid reset token"),
+  body("password")
+    .isString().withMessage("Password is required").bail()
+    .isLength({ min: 8 }).withMessage("Password must be at least 8 characters")
+    .custom(maxBytes72).withMessage("Password must be at most 72 bytes"),
+];
+
 const LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
 const isValidTimezone = (tz) => {
   try { new Intl.DateTimeFormat("en", { timeZone: tz }); return true; } catch { return false; }
