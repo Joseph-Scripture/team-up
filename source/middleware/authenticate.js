@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import config from "../config.js";
+import config from "../../config.js";
 import { getValidSession } from "../services/sessionService.js";
 
 export async function authenticate(req, res, next) {

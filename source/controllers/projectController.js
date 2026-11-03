@@ -115,6 +115,7 @@ export async function CreateDraft(req, res) {
 export async function UpdateDraft(req, res) {
   try {
     const project = await updateDraft(req.params.id, req.user.id, req.body);
+
     return res.status(200).json({ message: "Draft updated successfully", project });
   } catch (error) {
     return handleError(res, error);
@@ -155,12 +156,11 @@ export async function UpdateDraft(req, res) {
  */
 export async function PublishProject(req, res) {
   try {
-    // First persist any last-minute body data onto the draft, then publish.
-    // This lets the final "Continue to commitment" step save + publish in one call.
     if (Object.keys(req.body).length > 0) {
       await updateDraft(req.params.id, req.user.id, req.body);
     }
     const project = await publishProject(req.params.id, req.user.id);
+
     return res.status(200).json({ message: "Project published successfully", project });
   } catch (error) {
     return handleError(res, error);
@@ -238,6 +238,7 @@ export async function GetProject(req, res) {
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
+
     return res.status(200).json({ project });
   } catch (error) {
     return handleError(res, error);
@@ -275,6 +276,7 @@ export async function GetProject(req, res) {
 export async function DeleteProject(req, res) {
   try {
     const result = await deleteProject(req.params.id, req.user.id);
+
     return res.status(200).json({ message: "Project deleted successfully", project: result });
   } catch (error) {
     return handleError(res, error);

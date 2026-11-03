@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import prisma from "../db/client.js";
-import config from "../config.js";
+import config from "../../config.js";
 
 // Refresh-token sessions with rotation and theft detection.
 //
