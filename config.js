@@ -62,4 +62,8 @@ export default {
   // Refresh token: opaque random string, stored hashed in Session.
   // Sliding lifetime — each rotation extends it.
   REFRESH_TOKEN_TTL_DAYS: Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30),
+
+  // Redis is optional. When it is unavailable, cache helpers fall back to
+  // direct database reads without affecting the API response.
+  REDIS_URL: process.env.REDIS_URL?.trim() || null,
 };

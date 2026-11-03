@@ -1,4 +1,8 @@
 import prisma from "../db/client.js";
+import {
+  cacheGet, cacheSet, withCache, cacheDel, cacheDelPattern,
+  CacheKey, TTL,
+} from "../lib/cache.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -169,6 +173,9 @@ export async function createDraft(ownerId, data) {
     },
   });
 
+  // Invalidate owner's project list — a new project appeared
+  await cacheDel(CacheKey.projectsMine(ownerId));
+
   return project;
 }
 
@@ -263,6 +270,18 @@ export async function updateDraft(projectId, ownerId, data) {
 
     // 3. Replace milestones if provided
     if (milestones !== undefined) {
+      // The draft editor sends a replacement list without stable milestone IDs.
+      // Once tasks reference milestones, deleting and recreating that list would
+      // either violate the foreign key or silently detach work from its plan.
+      const linkedTaskCount = await tx.task.count({
+        where: { projectId, milestoneId: { not: null } },
+      });
+      if (linkedTaskCount > 0) {
+        throw new ProjectError(
+          "Milestones with linked tasks must be managed individually through the milestone endpoints",
+          409,
+        );
+      }
       await tx.milestone.deleteMany({ where: { projectId } });
       if (milestones.length > 0) {
         await tx.milestone.createMany({
@@ -299,6 +318,12 @@ export async function updateDraft(projectId, ownerId, data) {
       include: PROJECT_INCLUDE,
     });
   });
+
+  // Invalidate project detail and owner's list
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
 
   return project;
 }
@@ -373,6 +398,14 @@ export async function publishProject(projectId, ownerId) {
     include: PROJECT_INCLUDE,
   });
 
+  // Publishing changes status — invalidate project detail, owner list,
+  // and all recommendation caches (new OPEN project may appear for others)
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
   return project;
 }
 
@@ -389,18 +422,21 @@ export async function publishProject(projectId, ownerId) {
  * @returns {object|null}
  */
 export async function getProjectById(projectId, requesterId = null) {
+  const cacheKey = CacheKey.project(projectId);
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: PROJECT_INCLUDE,
   });
 
   if (!project || project.deletedAt) return null;
-
-  // Drafts are private — only the owner can see them
-  if (project.status === "DRAFT" && project.ownerId !== requesterId) {
-    return null;
+  if (project.status === "DRAFT") {
+    return project.ownerId === requesterId ? project : null;
   }
 
+  await cacheSet(cacheKey, project, TTL.PROJECT);
   return project;
 }
 
@@ -417,14 +453,15 @@ export async function getProjectById(projectId, requesterId = null) {
  * @returns {object[]}
  */
 export async function getProjectsByOwner(ownerId) {
-  return prisma.project.findMany({
-    where: {
-      ownerId,
-      deletedAt: null,
-    },
-    include: PROJECT_INCLUDE,
-    orderBy: { createdAt: "desc" },
-  });
+  return withCache(CacheKey.projectsMine(ownerId), () =>
+    prisma.project.findMany({
+      where: {
+        ownerId,
+        deletedAt: null,
+      },
+      include: PROJECT_INCLUDE,
+      orderBy: { createdAt: "desc" },
+    }), TTL.PROJECTS_MINE);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -450,9 +487,17 @@ export async function deleteProject(projectId, ownerId) {
     throw new ProjectError("Only the project owner can delete this project", 403);
   }
 
-  return prisma.project.update({
+  const project = await prisma.project.update({
     where: { id: projectId },
     data: { deletedAt: new Date() },
     select: { id: true, title: true, deletedAt: true },
   });
+
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
+  return project;
 }

@@ -3,7 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
-import config from "./source/config.js";
+import config from "./config.js";
 import authRoutes from "./source/routes/authRoutes.js";
 import profileRoutes from "./source/routes/profileRoutes.js";
 import projectRoutes from "./source/routes/projectRoutes.js";
