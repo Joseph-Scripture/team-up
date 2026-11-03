@@ -29,7 +29,7 @@ if (redis) {
   redis.on("error", (err) => {
     // ETIMEDOUT on idle connections is expected with managed Redis — skip the noise.
     if (err.code === "ETIMEDOUT") return;
-    console.error("[redis] error:", err.message);
+    
   });
   redis.on("close", () => console.warn("[redis] connection closed"));
 } else {
