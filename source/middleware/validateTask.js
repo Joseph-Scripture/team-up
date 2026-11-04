@@ -150,6 +150,11 @@ export const updateTaskRules = [
     .isString().trim()
     .isLength({ max: 1000 }).withMessage("blockerNote must be at most 1000 characters"),
 
+  body("handoverNote")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ max: 1000 }).withMessage("handoverNote must be at most 1000 characters"),
+
   body("estimatedHours")
     .optional({ values: "null" })
     .isInt({ min: 1 }).withMessage("estimatedHours must be a positive integer")
