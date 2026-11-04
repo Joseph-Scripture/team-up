@@ -176,6 +176,12 @@ model User {
   onboardingCompletedAt DateTime? @db.Timestamptz(3)
   preferredProjectDurationWeeks Int?
 
+  // Visibility settings — null means all public (default). When set, each
+  // boolean flag controls whether the field is shown on the public profile.
+  // Shape: { showName, showHeadline, showSkills, showSkillLevels,
+  //          showGoals, showAvailability, showPreferredDuration }
+  visibilitySettings Json?
+
   role   UserRole   @default(USER)
   status UserStatus @default(ACTIVE)
 
@@ -539,6 +545,7 @@ model Task {
   title       String  @db.VarChar(200)
   description String? @db.Text
   blockerNote String? @db.Text // only meaningful when status = BLOCKED
+  handoverNote String? @db.Text // written by owner/manager when reassigning
 
   status         TaskStatus   @default(TODO)
   priority       TaskPriority @default(MEDIUM)

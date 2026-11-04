@@ -1,4 +1,5 @@
 import prisma from "../db/client.js";
+import { resolveVisibility } from "./profileVisibilityService.js";
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -24,6 +25,7 @@ const profileSelect = {
   preferredProjectDurationWeeks: true,
   isAvailable: true,
   onboardingCompletedAt: true,
+  visibilitySettings: true,
   skills: {
     select: {
       level: true,
@@ -33,8 +35,13 @@ const profileSelect = {
 };
 
 // Hide the raw timestamp; the frontend only needs a boolean.
-function toResponse({ onboardingCompletedAt, ...rest }) {
-  return { ...rest, onboardingCompleted: !!onboardingCompletedAt };
+// Also resolve visibilitySettings so the owner always gets a complete object.
+function toResponse({ onboardingCompletedAt, visibilitySettings, ...rest }) {
+  return {
+    ...rest,
+    onboardingCompleted: !!onboardingCompletedAt,
+    visibilitySettings:  resolveVisibility(visibilitySettings),
+  };
 }
 
 export async function getProfile(userId) {

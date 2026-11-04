@@ -64,7 +64,7 @@ async function notifyTaskCommented({ comment, taskTitle, taskId, taskOwnerId, co
 const TASK_SELECT = {
   id: true, title: true, description: true,
   status: true, priority: true, sortOrder: true,
-  estimatedHours: true, blockerNote: true,
+  estimatedHours: true, blockerNote: true, handoverNote: true,
   dueDate: true, startedAt: true, completedAt: true,
   createdAt: true, updatedAt: true,
   milestone: { select: { id: true, title: true } },
@@ -358,6 +358,7 @@ export async function updateTask(userId, projectId, taskId, fields) {
     title, description, priority, dueDate, estimatedHours,
     milestoneId, assigneeMemberId, sortOrder,
     status, blockerNote,
+    handoverNote,  // only saved when assigneeMemberId actively changes
     contribution, // { title, completionNote, artifactUrl, fileUrl, fileType }
   } = fields;
 
@@ -365,7 +366,7 @@ export async function updateTask(userId, projectId, taskId, fields) {
   if (!isPrivileged) {
     const forbiddenFields = [
       title, description, priority, dueDate, estimatedHours,
-      milestoneId, assigneeMemberId, sortOrder,
+      milestoneId, assigneeMemberId, sortOrder, handoverNote,
     ];
     if (forbiddenFields.some((f) => f !== undefined)) {
       throw new TaskError("Members can only update task status, blocker note, and contribution", 403);
@@ -407,7 +408,15 @@ export async function updateTask(userId, projectId, taskId, fields) {
   if (dueDate          !== undefined) data.dueDate          = dueDate;
   if (estimatedHours   !== undefined) data.estimatedHours   = estimatedHours;
   if (milestoneId      !== undefined) data.milestoneId      = milestoneId;
-  if (assigneeMemberId !== undefined) data.assigneeMemberId = assigneeMemberId;
+  if (assigneeMemberId !== undefined) {
+    data.assigneeMemberId = assigneeMemberId;
+    // Handover note is only meaningful when the assignee is actually changing.
+    // Ignore it if the caller is setting the same assignee or not changing at all.
+    const isActualReassignment =
+      assigneeMemberId !== null &&
+      assigneeMemberId !== task.assigneeMemberId;
+    data.handoverNote = isActualReassignment ? (handoverNote ?? null) : task.handoverNote;
+  }
   if (sortOrder        !== undefined) data.sortOrder        = sortOrder;
 
   if (blockerNote !== undefined) {
@@ -523,6 +532,8 @@ export async function updateTask(userId, projectId, taskId, fields) {
       where: { id: userId },
       select: { name: true },
     });
+
+    // Notify incoming assignee
     if (newMember) {
       await notifyTaskAssigned({
         task: updatedTask,
@@ -531,6 +542,27 @@ export async function updateTask(userId, projectId, taskId, fields) {
         projectTitle:   project.title,
         assignerName:   assigner?.name ?? "A team member",
       });
+    }
+
+    // Notify outgoing assignee that the task was reassigned away from them
+    if (task.assigneeMemberId) {
+      const outgoing = await prisma.projectMember.findFirst({
+        where: { id: task.assigneeMemberId, projectId },
+        select: { userId: true },
+      });
+      if (outgoing && outgoing.userId !== userId) {
+        await createNotification({
+          userId:     outgoing.userId,
+          type:       "TASK_ASSIGNED",
+          projectId,
+          entityType: "task",
+          entityId:   updatedTask.id,
+          title:      `Task reassigned: ${updatedTask.title}`,
+          message:    `${assigner?.name ?? "A team member"} has reassigned "${updatedTask.title}" to someone else.`,
+          data:       { taskId: updatedTask.id, projectId },
+          dedupeKey:  `task-reassigned-away:${updatedTask.id}:${outgoing.userId}`,
+        });
+      }
     }
   }
 
