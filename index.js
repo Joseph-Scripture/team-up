@@ -12,6 +12,7 @@ import invitationRoutes, { inviteeRouter } from "./source/routes/invitationRoute
 import joinRequestRoutes, { requesterRouter } from "./source/routes/joinRequestRoutes.js";
 import notificationRoutes from "./source/routes/notificationRoutes.js";
 import uploadRoutes       from "./source/routes/uploadRoutes.js";
+import rateLimit from "express-rate-limit";
 
 const app = express();
 
@@ -21,7 +22,7 @@ const app = express();
 const corsOptions = {
   origin(origin, callback) {
     // Allow requests with no Origin header (server-to-server, curl, Postman).
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(true);
     if (config.ALLOWED_ORIGINS.includes(origin)) {
       return callback(null, true);
     }
@@ -42,6 +43,23 @@ app.use(cors(corsOptions));
 // Explicitly handle preflight (OPTIONS) for all routes so Express does not
 // fall through to other middleware before sending the 204 response.
 app.options("/{*path}", cors(corsOptions));
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Rate Limiting ─────────────────────────────────────────────────────────────
+// Limit requests to 100 per 15 minutes per IP across all endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, 
+  max: 100, 
+  standardHeaders: true, 
+  legacyHeaders: false, 
+  message: {
+    status: 429,
+    error: "Too many requests from this IP, please try again after 15 minutes.",
+  },
+});
+
+// Apply rate limiter globally to all /api/ routes
+app.use("/api/", apiLimiter);
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Swagger / OpenAPI docs ────────────────────────────────────────────────────
