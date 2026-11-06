@@ -22,7 +22,7 @@ const app = express();
 const corsOptions = {
   origin(origin, callback) {
     // Allow requests with no Origin header (server-to-server, curl, Postman).
-    if (!origin) return callback(true);
+    if (!origin) return callback(null, true);
     if (config.ALLOWED_ORIGINS.includes(origin)) {
       return callback(null, true);
     }
