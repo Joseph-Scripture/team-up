@@ -5,6 +5,17 @@ import { getMe, completeOnboarding } from "../controllers/profileController.js";
 import { validate } from "../middleware/validateResults.js";
 import { getSkills, getCategories } from "../controllers/skillController.js";
 import { skillQueryRules } from "../middleware/skillMiddleware.js";
+import {
+  GetVisibilitySettings,
+  UpdateVisibilitySettings,
+  GetPublicProfile,
+  GetCompletedProjects,
+} from "../controllers/profileVisibilityController.js";
+import {
+  updateVisibilityRules,
+  userIdParamRules,
+  completedProjectsRules,
+} from "../middleware/validateVisibility.js";
 
 const router = Router();
 
@@ -178,5 +189,21 @@ router.get("/users/me", authenticate, getMe);
  *       500: { description: Internal server error }
  */
 router.put("/users/me/onboarding", authenticate, onboardingRules, validate, completeOnboarding);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visibility settings (owner only)
+// NOTE: /users/me/visibility must be declared BEFORE /users/:userId so Express
+// does not treat the literal "me" as a userId.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get( "/users/me/visibility", authenticate, GetVisibilitySettings);
+router.patch("/users/me/visibility", authenticate, updateVisibilityRules, validate, UpdateVisibilitySettings);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public profile + completed projects (any authenticated user)
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get("/users/:userId",                    authenticate, userIdParamRules,       validate, GetPublicProfile);
+router.get("/users/:userId/completed-projects", authenticate, completedProjectsRules, validate, GetCompletedProjects);
 
 export default router;

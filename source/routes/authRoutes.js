@@ -4,6 +4,7 @@ import { signupRules, loginRules, forgotPasswordRules, resetPasswordRules } from
 import { authenticate } from "../middleware/authenticate.js";
 import { validate } from "../middleware/validateResults.js";
 import { REFRESH_COOKIE_NAME } from "../services/sessionService.js";
+import { authLimiter } from "../middleware/ratelimiter.js";
 
 const route = Router();
 
@@ -55,7 +56,7 @@ const authenticateIfBearer = (req, res, next) =>
  *       409: { description: An account with this email already exists }
  *       500: { description: Internal server error }
  */
-route.post("/signup", signupRules, validate, Signup);
+route.post("/signup", authLimiter, signupRules, validate, Signup);
 
 /**
  * @openapi
@@ -100,7 +101,7 @@ route.post("/signup", signupRules, validate, Signup);
  *       403: { description: Account is disabled }
  *       500: { description: Internal server error }
  */
-route.post("/login", loginRules, validate, Login);
+route.post("/login", authLimiter, loginRules, validate, Login);
 
 /**
  * @openapi
@@ -170,7 +171,7 @@ route.post("/login", loginRules, validate, Login);
  *                       field:   { type: string, example: email }
  *                       message: { type: string, example: Invalid email address }
  */
-route.post("/forgot-password", forgotPasswordRules, validate, ForgotPassword);
+route.post("/forgot-password", authLimiter, forgotPasswordRules, validate, ForgotPassword);
 
 /**
  * @openapi
@@ -242,7 +243,7 @@ route.post("/forgot-password", forgotPasswordRules, validate, ForgotPassword);
  *                   example: Invalid or expired password reset link
  *       500: { description: Internal server error }
  */
-route.post("/reset-password", resetPasswordRules, validate, ResetPassword);
+route.post("/reset-password", authLimiter, resetPasswordRules, validate, ResetPassword);
 
 /**
  * @openapi

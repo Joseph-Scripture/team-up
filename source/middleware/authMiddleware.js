@@ -5,6 +5,16 @@ import { body } from "express-validator";
 
 const maxBytes72 = (value) => Buffer.byteLength(value, "utf8") <= 72; // bcrypt ignores anything past 72 bytes
 
+const passwordStrengthRules = (field) => [
+  body(field)
+    .isString().withMessage("Password is required").bail()
+    .isLength({ min: 8 }).withMessage("Password must be at least 8 characters")
+    .custom(maxBytes72).withMessage("Password must be at most 72 bytes")
+    .matches(/[A-Za-z]/).withMessage("Password must contain at least one letter")
+    .matches(/[A-Z]/).withMessage("Password must contain at least one uppercase letter")
+    .matches(/[^A-Za-z0-9\s]/).withMessage("Password must contain at least one special character"),
+];
+
 export const signupRules = [
   body("username")
     .isString().withMessage("Username is required").bail()
@@ -16,10 +26,7 @@ export const signupRules = [
     .toLowerCase()
     .isEmail().withMessage("Invalid email address")
     .isLength({ max: 255 }).withMessage("Email is too long"),
-  body("password")
-    .isString().withMessage("Password is required").bail()
-    .isLength({ min: 8 }).withMessage("Password must be at least 8 characters")
-    .custom(maxBytes72).withMessage("Password must be at most 72 bytes"),
+  ...passwordStrengthRules("password"),
 ];
 
 export const loginRules = [
@@ -47,10 +54,7 @@ export const resetPasswordRules = [
     .isString().withMessage("Reset token is required").bail()
     .trim()
     .isLength({ min: 32, max: 200 }).withMessage("Invalid reset token"),
-  body("password")
-    .isString().withMessage("Password is required").bail()
-    .isLength({ min: 8 }).withMessage("Password must be at least 8 characters")
-    .custom(maxBytes72).withMessage("Password must be at most 72 bytes"),
+  ...passwordStrengthRules("password"),
 ];
 
 const LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
