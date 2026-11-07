@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/authenticate.js";
 import { onboardingRules,  } from "../middleware/authMiddleware.js";
-import { getMe, completeOnboarding } from "../controllers/profileController.js";
+import { getMe, completeOnboarding, deleteAccount } from "../controllers/profileController.js";
 import { validate } from "../middleware/validateResults.js";
 import { getSkills, getCategories } from "../controllers/skillController.js";
 import { skillQueryRules } from "../middleware/skillMiddleware.js";
@@ -145,6 +145,22 @@ router.get("/skills", skillQueryRules, validate, getSkills);
  *       500: { description: Internal server error }
  */
 router.get("/users/me", authenticate, getMe);
+
+/**
+ * @openapi
+ * /api/profile/users/me:
+ *   delete:
+ *     tags: [Profile]
+ *     summary: Delete the authenticated user's account
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Account successfully deleted }
+ *       401: { description: Missing, invalid, or expired token }
+ *       404: { description: User not found }
+ *       500: { description: Internal server error }
+ */
+router.delete("/users/me", authenticate, deleteAccount);
 
 /**
  * @openapi

@@ -32,3 +32,12 @@ export async function completeOnboarding(req, res) {
     return handleError(res, error, "completeOnboarding");
   }
 }
+
+export async function deleteAccount(req, res) {
+  try {
+    await profileService.deleteUserProfile(req.user.id);
+    return res.status(200).json({ message: "Account deleted successfully" });
+  } catch (error) {
+    return handleError(res, error, "deleteAccount");
+  }
+}
