@@ -12,9 +12,13 @@ import invitationRoutes, { inviteeRouter } from "./source/routes/invitationRoute
 import joinRequestRoutes, { requesterRouter } from "./source/routes/joinRequestRoutes.js";
 import notificationRoutes from "./source/routes/notificationRoutes.js";
 import uploadRoutes       from "./source/routes/uploadRoutes.js";
-import rateLimit from "express-rate-limit";
+import { apiLimiter }      from "./source/middleware/ratelimiter.js";
 
 const app = express();
+
+// Render (and most hosts) terminate TLS at a proxy. Without this, req.ip is
+// the proxy address and IP-based rate limits would treat every user as one.
+app.set("trust proxy", 1);
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 // Must be registered before all other middleware so that preflight OPTIONS
@@ -46,19 +50,7 @@ app.options("/{*path}", cors(corsOptions));
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
-// Limit requests to 100 per 15 minutes per IP across all endpoints
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
-  max: 100, 
-  standardHeaders: true, 
-  legacyHeaders: false, 
-  message: {
-    status: 429,
-    error: "Too many requests from this IP, please try again after 15 minutes.",
-  },
-});
-
-// Apply rate limiter globally to all /api/ routes
+// Limit requests to 100 per 15 minutes per IP across all endpoints.
 app.use("/api/", apiLimiter);
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -122,6 +114,31 @@ app.use("/api/uploads",       uploadRoutes);
 app.get("/health", (req, res) => {
 
     res.status(200).json({"message":"The api is working fine. This is the health endpoint "})
+});
+
+// ── Centralized error handler ────────────────────────────────────────────────
+// Keep every error response JSON-shaped. Multer and body-parser errors would
+// otherwise fall through to Express's default HTML error page.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err?.type === "entity.parse.failed") {
+    return res.status(400).json({ message: "Invalid JSON body" });
+  }
+
+  if (typeof err?.message === "string" && err.message.startsWith("CORS:")) {
+    return res.status(403).json({ message: err.message });
+  }
+
+  const status = err?.status ?? err?.statusCode ?? 500;
+
+  if (status >= 500) {
+    console.error("Unhandled request error:", err);
+  }
+
+  return res.status(status).json({
+    message: status >= 500 ? "Internal server error" : err.message,
+  });
 });
 
 

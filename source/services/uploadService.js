@@ -1,11 +1,11 @@
+import { randomUUID } from "node:crypto";
 import cloudinary from "../lib/cloudinary.js";
+import config from "../../config.js";
+import { detectMimeType, isMimeTypeCompatible } from "../lib/fileSignature.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-
-// How long (seconds) a signed upload URL remains valid.
-const UPLOAD_TTL_SECONDS = 300; // 5 minutes
 
 // Allowed upload contexts and the Cloudinary folder they map to.
 const CONTEXT_FOLDERS = {
@@ -14,9 +14,29 @@ const CONTEXT_FOLDERS = {
   evidence:     "teamup/evidence",
 };
 
-// Max file size we will allow (10 MB). Cloudinary enforces this on their end
-// when we include it in the signature params.
-const MAX_BYTES = 10 * 1024 * 1024;
+export const VALID_CONTEXTS = Object.keys(CONTEXT_FOLDERS);
+
+// Max file size enforced by multer (10 MB).
+export const MAX_BYTES = 10 * 1024 * 1024;
+
+// Allowed MIME types per context — shared with the multer middleware.
+export const ALLOWED_TYPES = {
+  avatar: ["image/jpeg", "image/png", "image/webp", "image/gif"],
+  evidence: [
+    "image/jpeg", "image/png", "image/webp", "image/gif",
+    "application/pdf",
+  ],
+  contribution: [
+    "image/jpeg", "image/png", "image/webp", "image/gif",
+    "application/pdf",
+    "application/zip", "application/x-zip-compressed",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain", "text/markdown",
+  ],
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom error
@@ -31,77 +51,131 @@ export class UploadError extends Error {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// generateUploadSignature
+// Validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+function assertValidUpload(buffer, mimetype, context) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new UploadError("File is empty", 400);
+  }
+
+  if (!VALID_CONTEXTS.includes(context)) {
+    throw new UploadError(
+      `context must be one of: ${VALID_CONTEXTS.join(", ")}`,
+      400,
+    );
+  }
+
+  const allowed = ALLOWED_TYPES[context];
+  if (!allowed.includes(mimetype)) {
+    throw new UploadError(
+      `File type "${mimetype}" is not allowed for context "${context}". ` +
+      `Allowed: ${allowed.join(", ")}`,
+      415,
+    );
+  }
+
+  const detected = detectMimeType(buffer);
+  if (!isMimeTypeCompatible(mimetype, detected)) {
+    throw new UploadError(
+      `The file contents do not match the declared type "${mimetype}".`,
+      415,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// uploadToCloudinary
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Generate a signed Cloudinary upload URL so the frontend can upload directly
- * to Cloudinary without the binary ever touching our server.
+ * Upload a file buffer directly to Cloudinary.
  *
- * Flow:
- *   1. Client calls POST /api/uploads/sign
- *   2. Server returns { uploadUrl, publicId, fileUrl, signature, ... }
- *   3. Client POSTs the file directly to Cloudinary using uploadUrl
- *   4. Client sends the returned fileUrl back with the task/contribution payload
+ * Single-request flow:
+ *   POST /api/uploads?context=avatar  (multipart/form-data)
+ *     fields: file (binary), optional context
+ *   → server validates type + size + magic bytes → uploads to Cloudinary
+ *   → returns { fileUrl, publicId }
  *
- * @param {object} opts
- * @param {string}  opts.filename     — original filename, used to build publicId
- * @param {string}  opts.contentType  — MIME type (e.g. "image/png", "application/pdf")
- * @param {string}  [opts.context="contribution"]  — scopes the Cloudinary folder
- * @returns {{ uploadUrl, publicId, fileUrl, signature, timestamp, apiKey, folder }}
+ * @param {Buffer} buffer   — file buffer from multer memoryStorage
+ * @param {string} mimetype — MIME type reported by multer
+ * @param {string} context  — "avatar" | "evidence" | "contribution"
+ * @returns {Promise<{ fileUrl: string, publicId: string }>}
  */
-export async function generateUploadSignature({ filename, contentType, context = "contribution" }) {
-  if (!filename || typeof filename !== "string" || filename.trim().length === 0) {
-    throw new UploadError("filename is required");
+export async function uploadToCloudinary(buffer, mimetype, context = "contribution") {
+  assertValidUpload(buffer, mimetype, context);
+
+  const cloudinaryConfig = cloudinary.config();
+  if (!cloudinaryConfig.cloud_name || !cloudinaryConfig.api_key || !cloudinaryConfig.api_secret) {
+    throw new UploadError("Cloudinary is not configured on the server", 503);
   }
-  if (!contentType || typeof contentType !== "string") {
-    throw new UploadError("contentType is required");
+
+  const folder = CONTEXT_FOLDERS[context];
+  const resourceType = mimetype.startsWith("image/") ? "image" : "raw";
+  // Cloudinary appends image extensions itself. Raw files are stored without
+  // an extension: appending ".pdf"/".zip" makes Cloudinary apply its PDF/ZIP
+  // delivery policy, which returns 401 on accounts that disable those formats.
+  const publicId = `${Date.now()}-${randomUUID()}`;
+  const dataUri = `data:${mimetype};base64,${buffer.toString("base64")}`;
+
+  try {
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder,
+      public_id:     publicId,
+      resource_type: resourceType,
+    });
+    return { fileUrl: result.secure_url, publicId: result.public_id };
+  } catch (error) {
+    // Keep the response generic but log the real reason (bad credentials,
+    // Cloudinary outage, rejected file, etc.) so it is diagnosable.
+    console.error("[cloudinary] upload failed:", error);
+    const status = error?.http_code === 400 ? 400 : 502;
+    throw new UploadError(
+      status === 400 ? "Cloudinary rejected the file" : "Cloudinary upload failed",
+      status,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deleteCloudinaryAsset
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Best-effort deletion of a previously uploaded Cloudinary asset.
+ * Used when a user replaces or clears their avatar.
+ *
+ * Only URLs belonging to this application's Cloudinary cloud are touched.
+ */
+export async function deleteCloudinaryAsset(fileUrl) {
+  if (!fileUrl || typeof fileUrl !== "string") return;
+
+  let url;
+  try {
+    url = new URL(fileUrl);
+  } catch {
+    return;
   }
 
-  const folder = CONTEXT_FOLDERS[context] ?? CONTEXT_FOLDERS.contribution;
+  if (url.hostname !== "res.cloudinary.com") return;
 
-  // Sanitise filename: strip path separators, replace spaces with dashes,
-  // strip the extension (Cloudinary appends it from the content type).
-  const safeName = filename
-    .replace(/[/\\]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/\.[^.]+$/, "")          // strip extension
-    .slice(0, 100);                   // cap length
+  const parts = url.pathname.split("/").filter(Boolean);
+  // /<cloud_name>/<resource_type>/<delivery_type>/...
+  if (parts[0] !== config.CLOUDINARY_CLOUD_NAME) return;
+  if (!["image", "raw", "video"].includes(parts[1])) return;
+  if (parts[2] !== "upload") return;
 
-  const timestamp = Math.floor(Date.now() / 1000);
-  const publicId  = `${folder}/${Date.now()}-${safeName}`;
+  let rest = parts.slice(3);
+  if (rest[0]?.startsWith("v") && /^\d+$/.test(rest[0].slice(1))) {
+    rest = rest.slice(1);
+  }
+  if (rest.length === 0) return;
 
-  // Parameters that will be signed. Must match exactly what the frontend
-  // sends when it POSTs to Cloudinary — any extra/missing param will fail.
-  const paramsToSign = {
-    folder,
-    public_id:    publicId,
-    timestamp,
-    max_file_size: MAX_BYTES,
-  };
+  const publicId = rest.join("/").replace(/\.[^.]+$/, "");
 
-  const signature = cloudinary.utils.api_sign_request(
-    paramsToSign,
-    cloudinary.config().api_secret,
-  );
-
-  // The direct upload endpoint. Frontend POSTs the file as multipart/form-data
-  // to this URL, including all the signed params below.
-  const cloudName = cloudinary.config().cloud_name;
-  const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`;
-
-  // The permanent URL where the file will be accessible after upload.
-  // We return this so the client can store it immediately after upload succeeds.
-  const fileUrl = `https://res.cloudinary.com/${cloudName}/image/upload/${publicId}`;
-
-  return {
-    uploadUrl,
-    publicId,
-    fileUrl,
-    signature,
-    timestamp,
-    apiKey:    cloudinary.config().api_key,
-    folder,
-    maxBytes:  MAX_BYTES,
-  };
+  try {
+    await cloudinary.uploader.destroy(publicId, { resource_type: parts[1] });
+  } catch (error) {
+    console.warn("[cloudinary] failed to delete old asset:", error?.message ?? error);
+  }
 }

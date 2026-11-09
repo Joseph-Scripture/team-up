@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/authenticate.js";
-import { onboardingRules,  } from "../middleware/authMiddleware.js";
-import { getMe, completeOnboarding } from "../controllers/profileController.js";
+import { onboardingRules, updateProfileRules } from "../middleware/authMiddleware.js";
+import { getMe, completeOnboarding, updateProfile } from "../controllers/profileController.js";
 import { validate } from "../middleware/validateResults.js";
+import { requireJson, rejectUnknownFields } from "../middleware/requestBody.js";
 import { getSkills, getCategories } from "../controllers/skillController.js";
 import { skillQueryRules } from "../middleware/skillMiddleware.js";
 import {
@@ -148,6 +149,89 @@ router.get("/users/me", authenticate, getMe);
 
 /**
  * @openapi
+ * /api/profile/users/me:
+ *   patch:
+ *     tags: [Profile]
+ *     summary: Update the authenticated user's profile
+ *     description: >
+ *       Partial update — send only the fields you want to change. All fields
+ *       are optional. Skills, when provided, fully replace the current set.
+ *
+ *       **To update a profile picture:**
+ *       1. Call `POST /api/uploads?context=avatar` as multipart/form-data
+ *          with the image in the `file` field.
+ *       2. Send the returned `fileUrl` as `avatarUrl` in this request body.
+ *
+ *       Send `avatarUrl: null` to remove the current picture. The old
+ *       Cloudinary asset is deleted automatically.
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:                         { type: string, maxLength: 100 }
+ *               headline:                     { type: string, maxLength: 160, nullable: true }
+ *               bio:                          { type: string, maxLength: 2000, nullable: true }
+ *               goals:                        { type: string, maxLength: 2000, nullable: true }
+ *               location:                     { type: string, maxLength: 120, nullable: true }
+ *               timezone:                     { type: string, example: Africa/Douala, nullable: true }
+ *               githubUrl:                    { type: string, format: uri, nullable: true }
+ *               portfolioUrl:                 { type: string, format: uri, nullable: true }
+ *               avatarUrl:
+ *                 type: string
+ *                 format: uri
+ *                 nullable: true
+ *                 description: Cloudinary fileUrl returned by POST /api/uploads?context=avatar
+ *               weeklyAvailabilityHours:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 168
+ *               preferredProjectDurationWeeks:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 52
+ *               isAvailable:
+ *                 type: boolean
+ *               skills:
+ *                 type: array
+ *                 description: Replaces the full skill set when provided
+ *                 minItems: 1
+ *                 maxItems: 50
+ *                 items:
+ *                   type: object
+ *                   required: [skillId, level]
+ *                   properties:
+ *                     skillId: { type: string }
+ *                     level:
+ *                       type: string
+ *                       enum: [BEGINNER, INTERMEDIATE, ADVANCED, EXPERT]
+ *     responses:
+ *       200: { description: Profile updated, returns the full updated profile }
+ *       400: { description: Validation error, unknown field, or unknown skill }
+ *       401: { description: Authentication required }
+ *       404: { description: User not found }
+ *       415: { description: Content-Type must be application/json }
+ */
+router.patch(
+  "/users/me",
+  authenticate,
+  requireJson,
+  rejectUnknownFields([
+    "name", "headline", "bio", "goals", "location", "timezone",
+    "githubUrl", "portfolioUrl", "avatarUrl",
+    "weeklyAvailabilityHours", "preferredProjectDurationWeeks",
+    "isAvailable", "skills",
+  ]),
+  updateProfileRules,
+  validate,
+  updateProfile,
+);
+
+/**
+ * @openapi
  * /api/profile/users/me/onboarding:
  *   put:
  *     tags: [Profile]
@@ -168,6 +252,11 @@ router.get("/users/me", authenticate, getMe);
  *               timezone: { type: string, example: Africa/Douala }
  *               githubUrl: { type: string, format: uri }
  *               portfolioUrl: { type: string, format: uri }
+ *               avatarUrl:
+ *                 type: string
+ *                 format: uri
+ *                 nullable: true
+ *                 description: Cloudinary fileUrl returned by POST /api/uploads?context=avatar
  *               weeklyAvailabilityHours: { type: integer, minimum: 0, maximum: 168, example: 15 }
  *               goals: { type: string, minLength: 1, maxLength: 2000, example: Practice defining requirements and coordinating a small product team. }
  *               preferredProjectDurationWeeks: { type: integer, minimum: 1, maximum: 52, example: 6 }
