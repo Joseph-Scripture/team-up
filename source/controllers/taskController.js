@@ -222,7 +222,7 @@ export async function GetTask(req, res) {
  *
  *       **Contribution block** (optional, only meaningful when status = COMPLETED):
  *       Include a `contribution` object to record what was delivered. If a file
- *       was uploaded via POST /api/uploads/sign, pass the returned fileUrl here.
+ *       was uploaded via POST /api/uploads?context=contribution, pass the returned fileUrl here.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -261,7 +261,7 @@ export async function GetTask(req, res) {
  *                   title:          { type: string, maxLength: 200 }
  *                   completionNote: { type: string, maxLength: 2000 }
  *                   artifactUrl:    { type: string, format: uri, description: "Link to Figma, GitHub, live demo, etc." }
- *                   fileUrl:        { type: string, format: uri, description: "Cloudinary fileUrl returned by POST /api/uploads/sign" }
+ *                   fileUrl:        { type: string, format: uri, description: "Cloudinary fileUrl returned by POST /api/uploads?context=contribution" }
  *                   fileType:
  *                     type: string
  *                     enum: [REPOSITORY, LIVE_DEMO, DOCUMENT, IMAGE, VIDEO, OTHER]

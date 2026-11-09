@@ -14,7 +14,7 @@ Built with **Node.js (ESM) + Express 5**, **Prisma ORM 7** and **PostgreSQL**.
 
 | Tool      | Version                       | Notes                                        |
 | --------- | ----------------------------- | -------------------------------------------- |
-| Node.js   | 20 LTS or newer (24 tested)   | `node -v`                                    |
+| Node.js   | 22.18+ or newer (24 tested)   | `node -v` — the Prisma client is imported as `.ts` and needs built-in type stripping |
 | npm       | 10+                           | ships with Node                              |
 | PostgreSQL| 14+                           | the schema uses `pg_trgm`, created by migration |
 | Git       | any recent                    |                                              |
@@ -66,19 +66,21 @@ Copy `.env.example` to `.env`. `.env` is gitignored — **never commit it**.
 
 | Variable                | Required | Default     | Description |
 | ----------------------- | -------- | ----------- | ----------- |
-| `DATABASE_URL`          | **yes**  | —           | PostgreSQL connection string used by both Prisma (`prisma7.config.js`) and the app (`source/db/client.js`).<br>Example: `postgresql://user:password@localhost:5432/teamup?sslmode=require` |
+| `DATABASE_URL`          | **yes**  | —           | PostgreSQL connection string used by both Prisma (`prisma.config.js`) and the app (`source/db/client.js`).<br>Example: `postgresql://user:password@localhost:5432/teamup?sslmode=require` |
 | `JWT_SECRET`            | **yes**  | —           | Secret used to sign/verify access tokens (HS256). **Must be at least 32 characters** — the app refuses to boot otherwise.<br>Generate one with: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
+| `CLOUDINARY_URL`        | **yes**  | —           | Cloudinary credentials in the form `cloudinary://api_key:api_secret@cloud_name`. Required by `POST /api/uploads`; the app refuses to boot if it is missing or malformed. |
 | `PORT`                  | no       | `4000`      | HTTP port the server listens on. |
 | `NODE_ENV`              | no       | `development`| Set to `production` in deployment. |
 | `ACCESS_TOKEN_TTL`      | no       | `15m`       | Access-token lifetime, in `jsonwebtoken` duration format (`30m`, `12h`, `7d`). |
 | `REFRESH_TOKEN_TTL_DAYS`| no       | `30`        | Sliding lifetime of the refresh token, in days. |
+| `UPLOAD_RATE_LIMIT_MAX` | no       | `20` prod / `100` dev | Maximum uploads per authenticated user per hour. |
 
 Notes:
 
-- `JWT_SECRET` and `ACCESS_TOKEN_TTL` are validated at startup in
-  `source/config.js`; a missing or short value crashes the server immediately
-  with a clear message.
-- `DATABASE_URL` is also read by the Prisma CLI (see `prisma7.config.js`), so it
+- `JWT_SECRET`, `CLOUDINARY_URL`, and `UPLOAD_RATE_LIMIT_MAX` are validated at
+  startup in `config.js`; a missing or invalid value crashes the server
+  immediately with a clear message.
+- `DATABASE_URL` is also read by the Prisma CLI (see `prisma.config.js`), so it
   must be present in `.env` for migrations to work. Prisma 7 does **not** load
   `.env` by itself — the config imports `dotenv/config`, and `prisma/seed.js`
   does the same.
@@ -92,6 +94,7 @@ Notes:
 | Script                  | What it does |
 | ----------------------- | ------------ |
 | `npm run dev`           | Start the API with nodemon (auto-restart on file changes). |
+| `npm test`              | Run the unit tests with Node's built-in test runner (no DB/Cloudinary needed). |
 | `npm run migrate:dev`   | Apply pending migrations to the dev DB, then run `db:verify-extras`. |
 | `npm run migrate:deploy`| Apply pending migrations (use this in production/CI), then run `db:verify-extras`. |
 | `npm run db:extras`     | (Re)apply the SQL objects Prisma cannot express — partial unique indexes, CHECK constraints, GIN/trigram indexes. Idempotent, safe to run any time. |
@@ -118,14 +121,14 @@ Notes:
 ```
 .
 ├── index.js                  # App entry: middleware, route mounting, listen
-├── prisma7.config.js         # Prisma 7 config (schema path, migrations, seed, datasource)
+├── config.js                 # Central env reading + validation (JWT_SECRET, CLOUDINARY_URL, PORT, TTLs)
+├── prisma.config.js          # Prisma 7 config (schema path, migrations, seed, datasource)
 ├── source/
-│   ├── config.js             # Central env reading + validation (JWT_SECRET, PORT, TTLs)
 │   ├── db/client.js          # Prisma client instance
-│   ├── routes/               # authRoutes, profileRoutes
+│   ├── routes/               # authRoutes, profileRoutes, uploadRoutes
 │   ├── controllers/          # Request handlers
-│   ├── services/             # Business logic (auth, sessions, profile, skills)
-│   └── middleware/           # authenticate, validation
+│   ├── services/             # Business logic (auth, sessions, profile, skills, uploads)
+│   └── middleware/           # authenticate, validation, multer, rate limiting
 ├── prisma/
 │   ├── schema.prisma         # Data model (output → src/generated/prisma)
 │   ├── migrations/           # Committed migration history
@@ -167,7 +170,29 @@ Base URL: `http://localhost:4000`
 | ------ | ----------------------------- | ------ | ----------- |
 | GET    | `/skills`                     | —      | Full skills catalogue. Optional query: `q` (partial name match) and `category`, both case-insensitive. |
 | GET    | `/users/me`                   | Bearer | Current user's profile. |
-| PUT    | `/users/me/onboarding`        | Bearer | Save onboarding: headline, bio, links, goals, availability, preferred project duration, skills. |
+| PATCH  | `/users/me`                   | Bearer | Partial profile update, including `avatarUrl`. Send `avatarUrl: null` to remove the picture. |
+| PUT    | `/users/me/onboarding`        | Bearer | Save onboarding: headline, bio, links, goals, availability, preferred project duration, skills, optional avatar. |
+
+### Uploads — `/api/uploads`
+
+| Method | Path            | Auth   | Description |
+| ------ | --------------- | ------ | ----------- |
+| POST   | `/api/uploads`  | Bearer | Multipart upload. Send `context` as a query parameter (`?context=avatar`, `evidence`, or `contribution`) and the file in the `file` field. Returns `{ fileUrl, publicId }`. |
+
+Profile-picture flow:
+
+```bash
+# 1. Upload the image
+curl -X POST "http://localhost:4000/api/uploads?context=avatar" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@avatar.png"
+
+# 2. Save the returned fileUrl
+curl -X PATCH "http://localhost:4000/api/profile/users/me" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"avatarUrl":"https://res.cloudinary.com/..."}'
+```
 
 Auth header for protected routes:
 
@@ -176,8 +201,8 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/profile/users/m
 ```
 
 > The route handlers carry full **OpenAPI/JSDoc annotations** (`@openapi`) for
-> every endpoint, ready for a Swagger UI route to be wired up — that route does
-> not exist yet.
+> every endpoint. Swagger UI is available at `/api/docs` and the raw OpenAPI
+> JSON at `/api/docs.json`.
 
 ---
 
