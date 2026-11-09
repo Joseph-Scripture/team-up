@@ -39,5 +39,11 @@ export async function updateProfile(req, res) {
     return res.status(200).json({ message: "Profile updated", user });
   } catch (error) {
     return handleError(res, error, "updateProfile");
+export async function deleteAccount(req, res) {
+  try {
+    await profileService.deleteUserProfile(req.user.id);
+    return res.status(200).json({ message: "Account deleted successfully" });
+  } catch (error) {
+    return handleError(res, error, "deleteAccount");
   }
 }
