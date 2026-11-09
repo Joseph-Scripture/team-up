@@ -15,13 +15,14 @@ const storage = multer.memoryStorage();
  */
 function fileFilter(req, file, cb) {
   const context = req.query?.context ?? req.body?.context ?? "contribution";
-  // Object.hasOwn avoids prototype keys like "__proto__"/"toString" being
-  // treated as valid contexts and crashing on .includes().
+  console.log("[multer:fileFilter] context:", context, "| mimetype:", file.mimetype, "| fieldname:", file.fieldname);
+
   const allowed = Object.hasOwn(ALLOWED_TYPES, context)
     ? ALLOWED_TYPES[context]
     : ALLOWED_TYPES.contribution;
 
   if (!allowed.includes(file.mimetype)) {
+    console.warn("[multer:fileFilter] REJECTED — type not in allowed list for context");
     return cb(
       Object.assign(new Error(
         `File type "${file.mimetype}" is not allowed for context "${context}". ` +
@@ -30,6 +31,7 @@ function fileFilter(req, file, cb) {
       false,
     );
   }
+  console.log("[multer:fileFilter] ACCEPTED");
   cb(null, true);
 }
 
@@ -63,8 +65,14 @@ export function validateUploadContext(req, res, next) {
  * proper JSON responses so they're consistent with the rest of the API.
  */
 export function handleUpload(req, res, next) {
+  console.log("[multer:handleUpload] start — content-type:", req.headers["content-type"]);
   uploadMiddleware(req, res, (err) => {
-    if (!err) return next();
+    if (!err) {
+      console.log("[multer:handleUpload] OK — file:", req.file?.originalname, "| size:", req.file?.size, "bytes | mimetype:", req.file?.mimetype);
+      return next();
+    }
+
+    console.error("[multer:handleUpload] error — code:", err.code, "| message:", err.message);
 
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
@@ -77,11 +85,9 @@ export function handleUpload(req, res, next) {
     if (err.code === "LIMIT_UNEXPECTED_FILE") {
       return res.status(400).json({ message: 'File field must be named "file".' });
     }
-    // fileFilter rejection (wrong MIME type)
     if (err.status === 415) {
       return res.status(415).json({ message: err.message });
     }
-    // Any other multer limit (too many parts/fields, malformed multipart, …).
     if (err instanceof multer.MulterError) {
       return res.status(400).json({ message: err.message });
     }

@@ -1,5 +1,6 @@
 import { matchedData } from "express-validator";
 import * as profileService from "../services/userProfile.js";
+import { clearRefreshCookie } from "../services/sessionService.js";
 
 function handleError(res, error, label) {
   if (error instanceof profileService.HttpError) {
@@ -39,9 +40,14 @@ export async function updateProfile(req, res) {
     return res.status(200).json({ message: "Profile updated", user });
   } catch (error) {
     return handleError(res, error, "updateProfile");
+  }
+
+}
 export async function deleteAccount(req, res) {
   try {
     await profileService.deleteUserProfile(req.user.id);
+    // Clear the httpOnly refresh token cookie so the client is fully signed out.
+    clearRefreshCookie(res);
     return res.status(200).json({ message: "Account deleted successfully" });
   } catch (error) {
     return handleError(res, error, "deleteAccount");
