@@ -1,9 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/authenticate.js";
 import { onboardingRules, updateProfileRules } from "../middleware/authMiddleware.js";
-import { getMe, completeOnboarding, updateProfile } from "../controllers/profileController.js";
-import { onboardingRules,  } from "../middleware/authMiddleware.js";
-import { getMe, completeOnboarding, deleteAccount } from "../controllers/profileController.js";
+import { getMe, completeOnboarding, updateProfile, deleteAccount } from "../controllers/profileController.js";
 import { validate } from "../middleware/validateResults.js";
 import { requireJson, rejectUnknownFields } from "../middleware/requestBody.js";
 import { getSkills, getCategories } from "../controllers/skillController.js";
@@ -231,7 +229,8 @@ router.patch(
   validate,
   updateProfile,
 );
- *   delete:
+/** 
+ *     delete:
  *     tags: [Profile]
  *     summary: Delete the authenticated user's account
  *     security:
@@ -241,7 +240,9 @@ router.patch(
  *       401: { description: Missing, invalid, or expired token }
  *       404: { description: User not found }
  *       500: { description: Internal server error }
- */
+ 
+*/
+
 router.delete("/users/me", authenticate, deleteAccount);
 
 /**

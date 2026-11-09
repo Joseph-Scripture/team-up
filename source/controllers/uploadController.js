@@ -78,18 +78,27 @@ function handleError(res, error) {
  */
 export async function Upload(req, res) {
   try {
+    console.log("[upload:controller] hit — user:", req.user?.id, "| query context:", req.query?.context, "| body context:", req.body?.context);
+
     if (!req.file) {
+      console.warn("[upload:controller] no file on req — multer may not have parsed the body");
       return res.status(400).json({
         message: "No file provided. Send the file as multipart/form-data with field name \"file\".",
       });
     }
 
+    console.log("[upload:controller] file received —", req.file.originalname, req.file.mimetype, req.file.size, "bytes");
+
     const context = req.query?.context ?? req.body?.context ?? "contribution";
+    console.log("[upload:controller] resolved context:", context);
+
     const { fileUrl, publicId } = await uploadToCloudinary(
       req.file.buffer,
       req.file.mimetype,
       context,
     );
+
+    console.log("[upload:controller] success — fileUrl:", fileUrl);
     return res.status(200).json({ fileUrl, publicId });
   } catch (error) {
     return handleError(res, error);

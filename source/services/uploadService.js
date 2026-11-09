@@ -55,6 +55,8 @@ export class UploadError extends Error {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function assertValidUpload(buffer, mimetype, context) {
+  console.log("[upload:service] assertValidUpload — mimetype:", mimetype, "| context:", context, "| buffer size:", buffer?.length);
+
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new UploadError("File is empty", 400);
   }
@@ -76,9 +78,10 @@ function assertValidUpload(buffer, mimetype, context) {
   }
 
   const detected = detectMimeType(buffer);
+  console.log("[upload:service] magic bytes detected:", detected);
   if (!isMimeTypeCompatible(mimetype, detected)) {
     throw new UploadError(
-      `The file contents do not match the declared type "${mimetype}".`,
+      `The file contents do not match the declared type "${mimetype}". Detected: "${detected}"`,
       415,
     );
   }
@@ -106,17 +109,18 @@ export async function uploadToCloudinary(buffer, mimetype, context = "contributi
   assertValidUpload(buffer, mimetype, context);
 
   const cloudinaryConfig = cloudinary.config();
+  console.log("[upload:service] cloudinary config — cloud_name:", cloudinaryConfig.cloud_name, "| api_key set:", !!cloudinaryConfig.api_key, "| api_secret set:", !!cloudinaryConfig.api_secret);
+
   if (!cloudinaryConfig.cloud_name || !cloudinaryConfig.api_key || !cloudinaryConfig.api_secret) {
     throw new UploadError("Cloudinary is not configured on the server", 503);
   }
 
   const folder = CONTEXT_FOLDERS[context];
   const resourceType = mimetype.startsWith("image/") ? "image" : "raw";
-  // Cloudinary appends image extensions itself. Raw files are stored without
-  // an extension: appending ".pdf"/".zip" makes Cloudinary apply its PDF/ZIP
-  // delivery policy, which returns 401 on accounts that disable those formats.
   const publicId = `${Date.now()}-${randomUUID()}`;
   const dataUri = `data:${mimetype};base64,${buffer.toString("base64")}`;
+
+  console.log("[upload:service] uploading to Cloudinary — folder:", folder, "| publicId:", publicId, "| resourceType:", resourceType, "| dataUri length:", dataUri.length);
 
   try {
     const result = await cloudinary.uploader.upload(dataUri, {
@@ -124,11 +128,10 @@ export async function uploadToCloudinary(buffer, mimetype, context = "contributi
       public_id:     publicId,
       resource_type: resourceType,
     });
+    console.log("[upload:service] Cloudinary success — secure_url:", result.secure_url);
     return { fileUrl: result.secure_url, publicId: result.public_id };
   } catch (error) {
-    // Keep the response generic but log the real reason (bad credentials,
-    // Cloudinary outage, rejected file, etc.) so it is diagnosable.
-    console.error("[cloudinary] upload failed:", error);
+    console.error("[upload:service] Cloudinary error — http_code:", error?.http_code, "| message:", error?.message, "| full error:", error);
     const status = error?.http_code === 400 ? 400 : 502;
     throw new UploadError(
       status === 400 ? "Cloudinary rejected the file" : "Cloudinary upload failed",
