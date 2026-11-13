@@ -256,6 +256,11 @@ export async function updateDraft(projectId, ownerId, data) {
             title: role.title,
             description: role.description ?? "",
             hoursPerWeek: role.hoursPerWeek,
+            // AI-matching fields (all optional)
+            ...(role.topics      !== undefined && { topics:      role.topics      }),
+            ...(role.goal        !== undefined && { goal:        role.goal        }),
+            ...(role.workMode    !== undefined && { workMode:    role.workMode    }),
+            ...(role.targetLevel !== undefined && { targetLevel: role.targetLevel }),
             skills: {
               create: (role.skills ?? []).map(({ skillId, minLevel, required = true }) => ({
                 skillId,
@@ -500,4 +505,102 @@ export async function deleteProject(projectId, ownerId) {
   await cacheDelPattern("projects:recommended:*");
 
   return project;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// searchProjects
+// Browse / discover OPEN projects with optional filters and text search.
+// Used by the Discover Projects screen.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * List published OPEN projects with optional search and filters.
+ *
+ * Filters (all optional):
+ *   q             — case-insensitive title / description substring search
+ *   projectType   — exact match on the ProjectType enum
+ *   skillIds[]    — project must have at least one of these skill IDs
+ *   minDuration   — durationWeeks >= minDuration
+ *   maxDuration   — durationWeeks <= maxDuration
+ *   minHours      — weeklyHours >= minHours
+ *   maxHours      — weeklyHours <= maxHours
+ *
+ * Always excludes soft-deleted projects and DRAFT / completed projects.
+ * Results are ordered newest-published first, then paginated.
+ *
+ * @param {string}   userId    — used to annotate whether user is already a member
+ * @param {object}   filters
+ * @param {object}   pagination  { page, limit }
+ * @returns {{ projects, pagination }}
+ */
+export async function searchProjects(userId, filters = {}, { page = 1, limit = 12 } = {}) {
+  const {
+    q,
+    projectType,
+    skillIds,
+    minDuration,
+    maxDuration,
+    minHours,
+    maxHours,
+  } = filters;
+
+  const safePage  = Math.max(1, Number(page));
+  const safeLimit = Math.min(50, Math.max(1, Number(limit)));
+  const skip      = (safePage - 1) * safeLimit;
+
+  const where = {
+    status:      "OPEN",
+    publishedAt: { not: null },
+    deletedAt:   null,
+    // Text search — case-insensitive match on title or description
+    ...(q && {
+      OR: [
+        { title:       { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+      ],
+    }),
+    // Enum filter
+    ...(projectType && { projectType }),
+    // Duration window
+    ...(minDuration !== undefined && { durationWeeks: { gte: Number(minDuration) } }),
+    ...(maxDuration !== undefined && {
+      durationWeeks: {
+        ...(minDuration !== undefined ? { gte: Number(minDuration) } : {}),
+        lte: Number(maxDuration),
+      },
+    }),
+    // Weekly hours window
+    ...(minHours !== undefined && { weeklyHours: { gte: Number(minHours) } }),
+    ...(maxHours !== undefined && {
+      weeklyHours: {
+        ...(minHours !== undefined ? { gte: Number(minHours) } : {}),
+        lte: Number(maxHours),
+      },
+    }),
+    // Skill filter — project must carry at least one of the requested skills
+    ...(skillIds?.length > 0 && {
+      skills: { some: { skillId: { in: skillIds } } },
+    }),
+  };
+
+  const [projects, total] = await Promise.all([
+    prisma.project.findMany({
+      where,
+      orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+      skip,
+      take: safeLimit,
+      include: PROJECT_INCLUDE,
+    }),
+    prisma.project.count({ where }),
+  ]);
+
+  return {
+    projects,
+    pagination: {
+      total,
+      page:       safePage,
+      limit:      safeLimit,
+      totalPages: Math.ceil(total / safeLimit),
+    },
+  };
 }

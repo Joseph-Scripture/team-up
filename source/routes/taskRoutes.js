@@ -17,6 +17,11 @@ import {
   createTeamUpdateRules,
 } from "../middleware/validateTask.js";
 import {
+  releaseMemberRules,
+  projectIdParamRule,
+  leaveProjectRules,
+} from "../middleware/validateContribution.js";
+import {
   CreateMilestone,
   ListMilestones,
   UpdateMilestone,
@@ -35,6 +40,11 @@ import {
   CreateTeamUpdate,
   ListTeamUpdates,
 } from "../controllers/taskController.js";
+import {
+  ListProjectMembers,
+  ReleaseMember,
+  LeaveProject,
+} from "../controllers/memberController.js";
 import { param, query } from "express-validator";
 
 // mergeParams: true so :projectId from the parent router is available here
@@ -103,5 +113,20 @@ router.get("/updates", [
   query("page").optional().isInt({ min: 1 }).toInt(),
   query("limit").optional().isInt({ min: 1, max: 50 }).toInt(),
 ], validate, ListTeamUpdates);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Members  →  /api/projects/:projectId/members
+// ─────────────────────────────────────────────────────────────────────────────
+
+// NOTE: /members/leave must be declared BEFORE /members/:memberId so Express
+// does not treat the literal "leave" as a memberId.
+router.post("/members/leave",
+  leaveProjectRules, validate, LeaveProject);
+
+router.get("/members",
+  projectIdParamRule, validate, ListProjectMembers);
+
+router.post("/members/:memberId/release",
+  releaseMemberRules, validate, ReleaseMember);
 
 export default router;

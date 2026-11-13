@@ -168,3 +168,104 @@ export async function releaseMember(requesterId, projectId, memberId, endReason)
     roleReopened: membership.roleId ? membership.role?.status === "CLOSED" : false,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// leaveProject
+// A member voluntarily leaves a project.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Allows an active member to leave a project voluntarily.
+ *
+ * Side effects (all in one transaction):
+ *  1. Sets ProjectMember.status = LEFT, endedAt = now, endReason
+ *  2. Unassigns all ACTIVE (non-terminal) tasks assigned to this member
+ *  3. Reopens the member's role if it was CLOSED
+ *
+ * Constraints:
+ *  - The project owner cannot leave — they must transfer ownership or delete the project first.
+ *  - Only active members can leave.
+ *
+ * @param {string} userId     — the authenticated user requesting to leave
+ * @param {string} projectId
+ * @param {string} [reason]   — optional reason
+ */
+export async function leaveProject(userId, projectId, reason) {
+  const now = new Date();
+
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+    select: { id: true, title: true, ownerId: true },
+  });
+
+  if (!project) throw new MemberError("Project not found", 404);
+
+  if (project.ownerId === userId) {
+    throw new MemberError(
+      "The project owner cannot leave. Transfer ownership or delete the project first.",
+      409,
+    );
+  }
+
+  const membership = await prisma.projectMember.findFirst({
+    where: { userId, projectId, status: "ACTIVE" },
+    select: {
+      id: true,
+      roleId: true,
+      role: { select: { id: true, title: true, status: true } },
+    },
+  });
+
+  if (!membership) throw new MemberError("You are not an active member of this project", 404);
+
+  await prisma.$transaction(async (tx) => {
+    // Mark membership as LEFT
+    await tx.projectMember.update({
+      where: { id: membership.id },
+      data: {
+        status:    "LEFT",
+        endedAt:   now,
+        endReason: reason ?? null,
+      },
+    });
+
+    // Unassign all active tasks
+    await tx.task.updateMany({
+      where: {
+        projectId,
+        assigneeMemberId: membership.id,
+        status: { notIn: ["COMPLETED", "CANCELLED"] },
+      },
+      data: { assigneeMemberId: null },
+    });
+
+    // Reopen the role if it was CLOSED
+    if (membership.roleId && membership.role?.status === "CLOSED") {
+      await tx.projectRole.update({
+        where: { id: membership.roleId },
+        data:  { status: "OPEN" },
+      });
+    }
+  });
+
+  // Notify the project owner (fire-and-forget)
+  await createNotification({
+    userId:     project.ownerId,
+    type:       "MEMBER_LEFT",
+    projectId,
+    entityType: "membership",
+    entityId:   membership.id,
+    title:      `A member has left ${project.title}`,
+    message:    reason
+      ? `A member left the ${membership.role?.title ?? "team"} role. Reason: ${reason}`
+      : `A member left the ${membership.role?.title ?? "team"} role on ${project.title}.`,
+    data: { projectId, roleTitle: membership.role?.title },
+    dedupeKey: `member-left:${membership.id}`,
+  });
+
+  return {
+    message:      `You have successfully left ${project.title}.`,
+    memberId:     membership.id,
+    roleReopened: membership.roleId ? membership.role?.status === "CLOSED" : false,
+  };
+}

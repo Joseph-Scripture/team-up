@@ -224,6 +224,9 @@ router.patch(
     "githubUrl", "portfolioUrl", "avatarUrl",
     "weeklyAvailabilityHours", "preferredProjectDurationWeeks",
     "isAvailable", "skills",
+    // AI-matching fields
+    "professionalRole", "collaborationDuration", "collaborationGoals",
+    "projectInterests", "workMode",
   ]),
   updateProfileRules,
   validate,

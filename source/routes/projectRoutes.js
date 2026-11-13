@@ -8,6 +8,7 @@ import {
   GetMyProjects,
   GetProject,
   DeleteProject,
+  SearchProjects,
 } from "../controllers/projectController.js";
 import { GetRecommendedProjects } from "../controllers/dashboardController.js";
 import { FindCollaborators } from "../controllers/invitationController.js";
@@ -35,8 +36,8 @@ router.use(authenticate);
  *       401: { description: Authentication required }
  */
 
-// NOTE: /mine and /recommended must be declared BEFORE /:id so Express does
-// not treat the literal strings "mine" or "recommended" as project IDs.
+// NOTE: /mine, /recommended, and /browse must be declared BEFORE /:id so Express does
+// not treat the literal strings as project IDs.
 router.get("/mine", GetMyProjects);
 
 /**
@@ -56,6 +57,10 @@ router.get("/mine", GetMyProjects);
  *       401: { description: Authentication required }
  */
 router.get("/recommended", GetRecommendedProjects);
+
+// GET /api/projects — browse / search all open projects (Discover Projects screen)
+// Must be before /:id to avoid "projects" being treated as an ID.
+router.get("/", SearchProjects);
 
 /**
  * @openapi

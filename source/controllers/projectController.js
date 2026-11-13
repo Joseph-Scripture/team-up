@@ -5,6 +5,7 @@ import {
   getProjectById,
   getProjectsByOwner,
   deleteProject,
+  searchProjects,
   ProjectError,
 } from "../services/projectService.js";
 
@@ -278,6 +279,105 @@ export async function DeleteProject(req, res) {
     const result = await deleteProject(req.params.id, req.user.id);
 
     return res.status(200).json({ message: "Project deleted successfully", project: result });
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/projects
+// Browse / search published OPEN projects (Discover Projects screen).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Browse and search published projects
+ *     description: >
+ *       Returns paginated OPEN projects for the Discover Projects screen.
+ *       All filter parameters are optional — omit them to browse all open projects.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: q
+ *         schema: { type: string, maxLength: 100 }
+ *         description: Case-insensitive search on project title and description
+ *       - in: query
+ *         name: projectType
+ *         schema:
+ *           type: string
+ *           enum: [WEB_APPLICATION, MOBILE_APP, DESKTOP_APP, API_SERVICE, DATA_SCIENCE, DESIGN, OTHER]
+ *       - in: query
+ *         name: skillIds
+ *         style: form
+ *         explode: true
+ *         schema: { type: array, items: { type: string } }
+ *         description: Filter to projects that require at least one of these skill IDs
+ *       - in: query
+ *         name: minDuration
+ *         schema: { type: integer, minimum: 1 }
+ *         description: Minimum project duration in weeks
+ *       - in: query
+ *         name: maxDuration
+ *         schema: { type: integer, minimum: 1 }
+ *         description: Maximum project duration in weeks
+ *       - in: query
+ *         name: minHours
+ *         schema: { type: integer, minimum: 0 }
+ *         description: Minimum weekly hours commitment
+ *       - in: query
+ *         name: maxHours
+ *         schema: { type: integer, minimum: 0 }
+ *         description: Maximum weekly hours commitment
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, minimum: 1, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 50, default: 12 }
+ *     responses:
+ *       200:
+ *         description: Paginated project list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 projects:   { type: array }
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     total:      { type: integer }
+ *                     page:       { type: integer }
+ *                     limit:      { type: integer }
+ *                     totalPages: { type: integer }
+ *       401: { description: Authentication required }
+ */
+export async function SearchProjects(req, res) {
+  try {
+    const {
+      q, projectType,
+      minDuration, maxDuration,
+      minHours, maxHours,
+      page, limit,
+    } = req.query;
+
+    // skillIds can arrive as ?skillIds[]=x&skillIds[]=y or ?skillIds=x
+    const skillIds = req.query["skillIds[]"] ?? req.query.skillIds;
+    const skillIdsArr = skillIds
+      ? (Array.isArray(skillIds) ? skillIds : [skillIds]).filter(Boolean)
+      : [];
+
+    const result = await searchProjects(
+      req.user.id,
+      { q, projectType, skillIds: skillIdsArr, minDuration, maxDuration, minHours, maxHours },
+      { page, limit },
+    );
+
+    return res.status(200).json(result);
   } catch (error) {
     return handleError(res, error);
   }

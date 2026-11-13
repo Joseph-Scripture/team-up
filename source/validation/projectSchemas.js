@@ -15,6 +15,7 @@ const PROJECT_TYPES = [
 ];
 
 const SKILL_LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
+const WORK_MODES   = ["REMOTE", "HYBRID", "IN_PERSON"];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reusable field rules
@@ -85,6 +86,27 @@ const sharedRules = [
   body("roles.*.skills.*.minLevel")
     .optional()
     .isIn(SKILL_LEVELS).withMessage(`minLevel must be one of: ${SKILL_LEVELS.join(", ")}`),
+
+  // ── AI-matching role fields (all optional) ────────────────────────────────
+  body("roles.*.topics")
+    .optional()
+    .isArray({ max: 20 }).withMessage("Role topics must be an array of up to 20 items"),
+  body("roles.*.topics.*")
+    .optional()
+    .isString().trim().notEmpty().withMessage("Each topic must be a non-empty string"),
+
+  body("roles.*.goal")
+    .optional()
+    .isString().trim()
+    .isLength({ max: 200 }).withMessage("Role goal must be at most 200 characters"),
+
+  body("roles.*.workMode")
+    .optional()
+    .isIn(WORK_MODES).withMessage(`workMode must be one of: ${WORK_MODES.join(", ")}`),
+
+  body("roles.*.targetLevel")
+    .optional()
+    .isIn(SKILL_LEVELS).withMessage(`targetLevel must be one of: ${SKILL_LEVELS.join(", ")}`),
 
   // ── Step 3: Commitment ───────────────────────────────────────────────────
   body("durationWeeks")

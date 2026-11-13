@@ -77,3 +77,17 @@ export const releaseMemberRules = [
     .isString().trim()
     .isLength({ max: 500 }).withMessage("endReason must be at most 500 characters"),
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:projectId/members/leave
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const leaveProjectRules = [
+  param("projectId")
+    .isString().trim().notEmpty().withMessage("projectId is required"),
+
+  body("reason")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ max: 500 }).withMessage("reason must be at most 500 characters"),
+];

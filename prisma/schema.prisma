@@ -149,6 +149,20 @@ enum AuthTokenType {
   PASSWORD_RESET
 }
 
+// How long a user wants to collaborate on projects.
+enum CollaborationDuration {
+  SHORT_TERM  // ≤ 6 weeks
+  LONG_TERM   // > 6 weeks
+  FLEXIBLE    // any duration
+}
+
+// Preferred work mode for a user or a project role.
+enum WorkMode {
+  REMOTE
+  HYBRID
+  IN_PERSON
+}
+
 // -------------------- USERS, AUTH AND SKILLS --------------------
 
 model User {
@@ -175,6 +189,19 @@ model User {
   isAvailable             Boolean @default(true)
   onboardingCompletedAt DateTime? @db.Timestamptz(3)
   preferredProjectDurationWeeks Int?
+
+  // ── AI-matching fields (all optional — existing users are unaffected) ──────
+  // The user's self-described professional role, e.g. "Frontend Developer".
+  professionalRole      String?               @db.VarChar(100)
+  // How long they prefer to collaborate.
+  collaborationDuration CollaborationDuration?
+  // What they want to get from collaborating — matches against role.goal in scoring.
+  // Stored as a Postgres text array; empty array = not set.
+  collaborationGoals    String[]
+  // Topics / domains they are interested in — matches against role.topics in scoring.
+  projectInterests      String[]
+  // Their preferred work mode.
+  workMode              WorkMode?
 
   // Visibility settings — null means all public (default). When set, each
   // boolean flag controls whether the field is shown on the public profile.
@@ -387,6 +414,18 @@ model ProjectRole {
   hoursPerWeek    Int?
   status          ProjectRoleStatus @default(OPEN)
 
+  // ── AI-matching fields (all optional — existing roles are unaffected) ──────
+  // Subject areas this role works in, e.g. ["Healthcare", "Public Health"].
+  // Matched against user.projectInterests in scoring.
+  topics      String[]
+  // The collaboration goal for this role, e.g. "Solve a real-world problem".
+  // Matched against user.collaborationGoals in scoring.
+  goal        String?   @db.VarChar(200)
+  // The expected work mode for this role.
+  workMode    WorkMode?
+  // The experience level this role is targeting.
+  targetLevel SkillLevel?
+
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   skills       RoleSkill[]
@@ -428,6 +467,9 @@ model ProjectMember {
   joinedAt  DateTime  @default(now()) @db.Timestamptz(3)
   endedAt   DateTime? @db.Timestamptz(3) // was releasedAt; now covers RELEASED and LEFT
   endReason String?   @db.Text
+  // Set by the member when they know they will be unavailable for a period.
+  // The inactivity service treats "away_until ≥ today" as Away status.
+  awayUntil DateTime? @db.Timestamptz(3)
 
   project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
