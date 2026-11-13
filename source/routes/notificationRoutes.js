@@ -4,17 +4,35 @@ import { validate }     from "../middleware/validateResults.js";
 import {
   listNotificationsRules,
   notificationIdParamRules,
+  updatePreferencesRules,
 } from "../middleware/validateNotification.js";
 import {
   ListNotifications,
   MarkAsRead,
   MarkAllAsRead,
 } from "../controllers/notificationController.js";
+import {
+  GetPreferences,
+  UpdatePreferences,
+} from "../controllers/notificationPreferenceController.js";
 
 const router = Router();
 
 // All notification routes require a valid session.
 router.use(authenticate);
+
+/**
+ * GET /api/notifications/preferences
+ * Returns the full notification preference matrix for the authenticated user.
+ * NOTE: declared before /:notificationId routes to prevent route shadowing.
+ */
+router.get("/preferences", GetPreferences);
+
+/**
+ * PUT /api/notifications/preferences
+ * Upsert one or more notification preferences.
+ */
+router.put("/preferences", updatePreferencesRules, validate, UpdatePreferences);
 
 /**
  * GET /api/notifications
@@ -34,10 +52,7 @@ router.get(
  * NOTE: declared before /:notificationId/read so Express does not treat
  * the literal string "read-all" as a notification ID.
  */
-router.patch(
-  "/read-all",
-  MarkAllAsRead,
-);
+router.patch("/read-all", MarkAllAsRead);
 
 /**
  * PATCH /api/notifications/:notificationId/read

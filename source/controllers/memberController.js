@@ -2,6 +2,7 @@ import { matchedData } from "express-validator";
 import {
   listProjectMembers,
   releaseMember,
+  leaveProject,
   MemberError,
 } from "../services/memberService.js";
 
@@ -104,6 +105,62 @@ export async function ReleaseMember(req, res) {
     const { projectId, memberId } = matchedData(req, { locations: ["params"] });
     const { endReason }           = matchedData(req, { locations: ["body"] });
     const result = await releaseMember(req.userId, projectId, memberId, endReason);
+    return res.status(200).json(result);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:projectId/members/leave
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{projectId}/members/leave:
+ *   post:
+ *     tags: [Members]
+ *     summary: Leave a project voluntarily
+ *     description: >
+ *       Allows an active member to leave a project. Sets the membership status
+ *       to LEFT, unassigns all their active tasks, and reopens their role.
+ *       The project owner cannot leave — transfer ownership or delete the project first.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 maxLength: 500
+ *                 description: Optional reason for leaving
+ *     responses:
+ *       200:
+ *         description: Successfully left the project
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:      { type: string }
+ *                 memberId:     { type: string }
+ *                 roleReopened: { type: boolean }
+ *       404: { description: Project not found or not an active member }
+ *       409: { description: Owner cannot leave — transfer ownership first }
+ */
+export async function LeaveProject(req, res) {
+  try {
+    const { projectId } = matchedData(req, { locations: ["params"] });
+    const { reason }    = matchedData(req, { locations: ["body"] });
+    const result = await leaveProject(req.userId, projectId, reason);
     return res.status(200).json(result);
   } catch (err) {
     return handleError(res, err);

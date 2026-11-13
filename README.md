@@ -58,6 +58,24 @@ curl http://localhost:4000/
 curl http://localhost:4000/api/profile/skills
 ```
 
+### Create a sample project through the wizard
+
+After signing in, use the returned access token to run a complete project
+creation flow. The example resolves real skill IDs from the seeded catalogue,
+creates a complete draft, and then publishes it. It creates a real project owned
+by the account represented by the token.
+
+```bash
+API_BASE_URL=http://localhost:4000 ACCESS_TOKEN='<access-token>' \
+  node examples/create-mock-project.mjs
+```
+
+The payload in `examples/create-mock-project.mjs` follows the API's four steps:
+project basics and skills, roles and role skills, commitment, then milestones.
+The same complete payload is sent to `POST /api/projects/:id/publish` because
+the publish endpoint validates the wizard fields before changing the draft to
+`OPEN`.
+
 ---
 
 ## Environment variables

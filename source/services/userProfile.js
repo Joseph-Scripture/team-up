@@ -27,6 +27,12 @@ const profileSelect = {
   isAvailable: true,
   onboardingCompletedAt: true,
   visibilitySettings: true,
+  // AI-matching fields
+  professionalRole: true,
+  collaborationDuration: true,
+  collaborationGoals: true,
+  projectInterests: true,
+  workMode: true,
   skills: {
     select: {
       level: true,
@@ -78,6 +84,9 @@ export async function updateProfile(userId, data) {
     "name", "headline", "bio", "goals", "location", "timezone",
     "githubUrl", "portfolioUrl", "avatarUrl",
     "weeklyAvailabilityHours", "preferredProjectDurationWeeks", "isAvailable",
+    // AI-matching fields
+    "professionalRole", "collaborationDuration", "collaborationGoals",
+    "projectInterests", "workMode",
   ];
   for (const key of UPDATABLE) {
     if (scalarFields[key] !== undefined) scalarUpdate[key] = scalarFields[key];

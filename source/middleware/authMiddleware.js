@@ -1,6 +1,10 @@
 import { body } from "express-validator";
 import config from "../../config.js";
 
+const LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
+const COLLABORATION_DURATIONS = ["SHORT_TERM", "LONG_TERM", "FLEXIBLE"];
+const WORK_MODES = ["REMOTE", "HYBRID", "IN_PERSON"];
+
 const maxBytes72 = (value) => Buffer.byteLength(value, "utf8") <= 72; // bcrypt ignores anything past 72 bytes
 
 const passwordStrengthRules = (field) => [
@@ -55,7 +59,6 @@ export const resetPasswordRules = [
   ...passwordStrengthRules("password"),
 ];
 
-const LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
 const isValidTimezone = (tz) => {
   try { new Intl.DateTimeFormat("en", { timeZone: tz }); return true; } catch { return false; }
 };
@@ -129,6 +132,34 @@ export const onboardingRules = [
   body("skills").isArray({ min: 1, max: 50 }).withMessage("Select 1 to 50 skills"),
   body("skills.*.skillId").isString().trim().notEmpty().withMessage("skillId is required"),
   body("skills.*.level").isIn(LEVELS).withMessage(`level must be one of ${LEVELS.join(", ")}`),
+
+  // ── AI-matching fields (all optional) ────────────────────────────────────
+  body("professionalRole")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ max: 100 }).withMessage("professionalRole must be at most 100 characters"),
+
+  body("collaborationDuration")
+    .optional({ values: "null" })
+    .isIn(COLLABORATION_DURATIONS)
+    .withMessage(`collaborationDuration must be one of: ${COLLABORATION_DURATIONS.join(", ")}`),
+
+  body("collaborationGoals")
+    .optional()
+    .isArray({ max: 20 }).withMessage("collaborationGoals must be an array of up to 20 items"),
+  body("collaborationGoals.*")
+    .isString().trim().notEmpty().withMessage("Each collaborationGoal must be a non-empty string"),
+
+  body("projectInterests")
+    .optional()
+    .isArray({ max: 20 }).withMessage("projectInterests must be an array of up to 20 items"),
+  body("projectInterests.*")
+    .isString().trim().notEmpty().withMessage("Each projectInterest must be a non-empty string"),
+
+  body("workMode")
+    .optional({ values: "null" })
+    .isIn(WORK_MODES)
+    .withMessage(`workMode must be one of: ${WORK_MODES.join(", ")}`),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,4 +207,32 @@ export const updateProfileRules = [
 
   body("skills.*.level")
     .isIn(LEVELS).withMessage(`level must be one of ${LEVELS.join(", ")}`),
+
+  // ── AI-matching fields (all optional) ────────────────────────────────────
+  body("professionalRole")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ max: 100 }).withMessage("professionalRole must be at most 100 characters"),
+
+  body("collaborationDuration")
+    .optional({ values: "null" })
+    .isIn(COLLABORATION_DURATIONS)
+    .withMessage(`collaborationDuration must be one of: ${COLLABORATION_DURATIONS.join(", ")}`),
+
+  body("collaborationGoals")
+    .optional()
+    .isArray({ max: 20 }).withMessage("collaborationGoals must be an array of up to 20 items"),
+  body("collaborationGoals.*")
+    .isString().trim().notEmpty().withMessage("Each collaborationGoal must be a non-empty string"),
+
+  body("projectInterests")
+    .optional()
+    .isArray({ max: 20 }).withMessage("projectInterests must be an array of up to 20 items"),
+  body("projectInterests.*")
+    .isString().trim().notEmpty().withMessage("Each projectInterest must be a non-empty string"),
+
+  body("workMode")
+    .optional({ values: "null" })
+    .isIn(WORK_MODES)
+    .withMessage(`workMode must be one of: ${WORK_MODES.join(", ")}`),
 ];
