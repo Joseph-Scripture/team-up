@@ -4,7 +4,7 @@ import { signupRules, loginRules, forgotPasswordRules, resetPasswordRules } from
 import { authenticate } from "../middleware/authenticate.js";
 import { validate } from "../middleware/validateResults.js";
 import { REFRESH_COOKIE_NAME } from "../services/sessionService.js";
-import { authLimiter } from "../middleware/ratelimiter.js";
+import { authLimiter, passwordResetLimiter } from "../middleware/ratelimiter.js";
 
 const route = Router();
 
@@ -125,8 +125,9 @@ route.post("/login", authLimiter, loginRules, validate, Login);
  *       consuming it marks it as used and cleans up any other pending tokens
  *       for the same account.
  *
- *       **SMTP required:** If `SMTP_URL` and `EMAIL_FROM` are not configured,
- *       the request is silently accepted but no email is sent.
+ *       **Email delivery:** reset emails are sent through the SendLiberty API.
+ *       If `SEND_LIBERTY` and `EMAIL_FROM` are not configured, the request is
+ *       silently accepted but no email is sent.
  *     requestBody:
  *       required: true
  *       content:
@@ -171,7 +172,7 @@ route.post("/login", authLimiter, loginRules, validate, Login);
  *                       field:   { type: string, example: email }
  *                       message: { type: string, example: Invalid email address }
  */
-route.post("/forgot-password", authLimiter, forgotPasswordRules, validate, ForgotPassword);
+route.post("/forgot-password", passwordResetLimiter, forgotPasswordRules, validate, ForgotPassword);
 
 /**
  * @openapi

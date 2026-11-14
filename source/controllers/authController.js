@@ -100,8 +100,9 @@ export async function ForgotPassword(req, res) {
     await requestPasswordReset(req.body.email);
   } catch (error) {
     // Preserve the same response for known and unknown addresses. Operators can
-    // still diagnose an SMTP problem from the server log.
-    console.error("password-reset email failed:", error.message);
+    // still diagnose an email-delivery problem from the server log.
+    const cause = error.cause?.message ? ` (cause: ${error.cause.message})` : "";
+    console.error("password-reset email failed:", `${error.message}${cause}`);
   }
   return res.status(202).json({ message: RESET_REQUEST_MESSAGE });
 }

@@ -135,10 +135,11 @@ export async function UpdateDraft(req, res) {
  *     tags: [Projects]
  *     summary: Publish a draft project
  *     description: >
- *       Validates that all required fields are present on the stored draft,
- *       then transitions status from DRAFT to OPEN and sets publishedAt.
- *       The request body must contain all required fields (same as publishRules).
- *       The service performs a final completeness check as a safety net.
+ *       Validates that all required fields are present, then transitions status
+ *       from DRAFT to OPEN and sets publishedAt. The body may be omitted or
+ *       empty to publish the already-saved draft; when fields are provided
+ *       (same as publishRules), the draft is updated first. The service performs
+ *       a final completeness check as a safety net.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -157,7 +158,9 @@ export async function UpdateDraft(req, res) {
  */
 export async function PublishProject(req, res) {
   try {
-    if (Object.keys(req.body).length > 0) {
+    // An omitted body leaves req.body undefined, while `{}` is an empty object.
+    // Both mean "publish the draft as saved" — only update when data was sent.
+    if (req.body && Object.keys(req.body).length > 0) {
       await updateDraft(req.params.id, req.user.id, req.body);
     }
     const project = await publishProject(req.params.id, req.user.id);

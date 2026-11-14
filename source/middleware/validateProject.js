@@ -36,16 +36,18 @@ export const validateDraftUpdate = [...updateDraftRules, check];
  *
  * Two valid publish flows:
  *
- *   1. Empty body `{}` — all data was already saved via PUT requests.
- *      Skip express-validator entirely; the service's own completeness
- *      check will catch any missing fields and return a clear 400.
+ *   1. Empty body `{}` or no body at all — all data was already saved via
+ *      PUT requests. Skip express-validator entirely; the service's own
+ *      completeness check will catch any missing fields and return a clear
+ *      400. Note that body-parser leaves `req.body` undefined when the
+ *      request has no body, so both cases must be handled here.
  *
  *   2. Body contains data — the frontend is saving + publishing in one
  *      call. Run publishRules to validate the incoming fields before
  *      writing them to the DB.
  */
 export function validatePublish(req, res, next) {
-  if (Object.keys(req.body).length === 0) {
+  if (!req.body || Object.keys(req.body).length === 0) {
     // Nothing to validate — delegate entirely to the service check.
     return next();
   }

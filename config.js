@@ -115,10 +115,15 @@ export default {
   // Sliding lifetime — each rotation extends it.
   REFRESH_TOKEN_TTL_DAYS: Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30),
 
-  // Password-reset links are delivered by Nodemailer through this SMTP URL.
-  // Example: smtps://username:password@smtp.example.com:465
-  SMTP_URL: process.env.SMTP_URL?.trim() || null,
+  // Password-reset links are delivered through the SendLiberty HTTP API.
+  // SEND_LIBERTY is the API key; SEND_LIBERTY_URL is optional and mainly
+  // useful for pointing tests at a local stub.
+  SEND_LIBERTY_API_KEY:
+    (process.env.SEND_LIBERTY_API_KEY ?? process.env.SEND_LIBERTY)?.trim() || null,
+  SEND_LIBERTY_URL:
+    process.env.SEND_LIBERTY_URL?.trim() || "https://sendliberty.com/api/send",
   EMAIL_FROM: process.env.EMAIL_FROM?.trim() || null,
+  EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO?.trim() || null,
   FRONTEND_URL,
   PASSWORD_RESET_TTL_MINUTES,
 

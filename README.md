@@ -92,12 +92,20 @@ Copy `.env.example` to `.env`. `.env` is gitignored — **never commit it**.
 | `ACCESS_TOKEN_TTL`      | no       | `15m`       | Access-token lifetime, in `jsonwebtoken` duration format (`30m`, `12h`, `7d`). |
 | `REFRESH_TOKEN_TTL_DAYS`| no       | `30`        | Sliding lifetime of the refresh token, in days. |
 | `UPLOAD_RATE_LIMIT_MAX` | no       | `20` prod / `100` dev | Maximum uploads per authenticated user per hour. |
+| `SEND_LIBERTY`          | for reset emails | — | SendLiberty API key used to deliver password-reset emails. |
+| `EMAIL_FROM`            | for reset emails | — | Sender shown in reset emails, e.g. `"TeamUP <no-reply@example.com>"`. Must be allowed by SendLiberty. |
+| `EMAIL_REPLY_TO`        | no       | —           | Optional Reply-To address for reset emails. |
+| `SEND_LIBERTY_URL`      | no       | `https://sendliberty.com/api/send` | Endpoint override, useful for tests/stubs. |
 
 Notes:
 
 - `JWT_SECRET`, `CLOUDINARY_URL`, and `UPLOAD_RATE_LIMIT_MAX` are validated at
   startup in `config.js`; a missing or invalid value crashes the server
   immediately with a clear message.
+- Password-reset emails are delivered over HTTPS through SendLiberty instead of
+  SMTP. Without `SEND_LIBERTY` and `EMAIL_FROM`, the forgot-password endpoint
+  still returns 202 (to avoid account enumeration) but logs a delivery error and
+  sends nothing.
 - `DATABASE_URL` is also read by the Prisma CLI (see `prisma.config.js`), so it
   must be present in `.env` for migrations to work. Prisma 7 does **not** load
   `.env` by itself — the config imports `dotenv/config`, and `prisma/seed.js`

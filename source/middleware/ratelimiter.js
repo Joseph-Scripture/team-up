@@ -44,3 +44,16 @@ export const uploadLimiter = rateLimit({
     error: `Upload limit reached. You can upload up to ${config.UPLOAD_RATE_LIMIT_MAX} files per hour.`,
   },
 });
+
+
+
+export const passwordResetLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    error: "Too many password reset attempts. Please wait 10 minutes before trying again.",
+  },
+});
