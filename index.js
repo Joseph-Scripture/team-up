@@ -10,6 +10,7 @@ import projectRoutes from "./source/routes/projectRoutes.js";
 import dashboardRoutes from "./source/routes/dashboardRoutes.js";
 import invitationRoutes, { inviteeRouter } from "./source/routes/invitationRoutes.js";
 import joinRequestRoutes, { requesterRouter } from "./source/routes/joinRequestRoutes.js";
+import dateExtensionRoutes, { requesterRouter as dateExtensionRequesterRouter } from "./source/routes/dateExtensionRoutes.js";
 import notificationRoutes from "./source/routes/notificationRoutes.js";
 import uploadRoutes       from "./source/routes/uploadRoutes.js";
 import { apiLimiter }      from "./source/middleware/ratelimiter.js";
@@ -72,6 +73,37 @@ const swaggerSpec = swaggerJsdoc({
           bearerFormat: "JWT",
         },
       },
+      schemas: {
+        DateExtensionRequest: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            projectId: { type: "string" },
+            taskId: {
+              type: "string",
+              nullable: true,
+              description: "Null when the request targets the project target end date.",
+            },
+            requesterId: { type: "string" },
+            reviewerId: { type: "string", nullable: true },
+            currentDate: { type: "string", format: "date-time", nullable: true },
+            requestedDate: { type: "string", format: "date-time" },
+            reason: { type: "string" },
+            decisionNote: { type: "string", nullable: true },
+            status: {
+              type: "string",
+              enum: ["PENDING", "ACCEPTED", "DECLINED", "WITHDRAWN"],
+            },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" },
+            reviewedAt: { type: "string", format: "date-time", nullable: true },
+            project: { type: "object" },
+            task: { type: "object", nullable: true },
+            requester: { type: "object" },
+            reviewer: { type: "object", nullable: true },
+          },
+        },
+      },
     },
   },
   // Scan all route files for @openapi JSDoc comments
@@ -92,6 +124,7 @@ app.use("/api/projects", projectRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/invitations", inviteeRouter);
 app.use("/api/join-requests", requesterRouter);
+app.use("/api/date-extension-requests", dateExtensionRequesterRouter);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/uploads",       uploadRoutes);
 

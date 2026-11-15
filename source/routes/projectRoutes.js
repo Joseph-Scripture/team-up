@@ -16,6 +16,7 @@ import { findCollaboratorsRules } from "../middleware/validateInvitation.js";
 import { validate } from "../middleware/validateResults.js";
 import invitationRoutes from "./invitationRoutes.js";
 import joinRequestRoutes from "./joinRequestRoutes.js";
+import dateExtensionRoutes from "./dateExtensionRoutes.js";
 import taskRoutes        from "./taskRoutes.js";
 
 const router = Router();
@@ -182,6 +183,14 @@ router.use("/:projectId/invitations", invitationRoutes);
 // The :projectId param is forwarded via mergeParams in the sub-router.
 // ─────────────────────────────────────────────────────────────────────────────
 router.use("/:projectId/join-requests", joinRequestRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped date extension request routes
+// Mounts: POST/GET /api/projects/:projectId/date-extension-requests
+//         GET/PATCH /api/projects/:projectId/date-extension-requests/:requestId
+// The :projectId param is forwarded via mergeParams in the sub-router.
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId/date-extension-requests", dateExtensionRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Project-scoped task, milestone, and team update routes

@@ -286,3 +286,85 @@ Authorization: Bearer {{accessToken}}
 #   }
 GET {{baseUrl}}/api/projects/<paste-project-id>/collaborators?roleId=<paste-role-id>&skills[]=<paste-skill-id>&projectType=WEB_APPLICATION&durationWeeks=6&weeklyHours=8&page=1&limit=20
 Authorization: Bearer {{accessToken}}
+
+###
+# ── DATE EXTENSION ENDPOINTS ─────────────────────────────────────────────────
+
+###
+# Request a new date for a task deadline or for the project target end date
+# Needed: bearer token, active project member
+# Body:
+#   requestedDate — ISO 8601 date/time, must be later than the current deadline
+#   reason        — why more time is needed (max 1000 chars)
+#   taskId        — optional; omit to extend the project's targetEndDate
+# Response: 201 with the PENDING request. Owner/managers are notified.
+POST {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "taskId": "<paste-task-id>",
+  "requestedDate": "2026-11-30T00:00:00.000Z",
+  "reason": "The API integration took longer than expected."
+}
+
+###
+# Extend the project's target end date instead (omit taskId)
+POST {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "requestedDate": "2026-12-31T00:00:00.000Z",
+  "reason": "The team lost a week to a dependency outage."
+}
+
+###
+# List requests for a project (owner / manager only)
+# Optional query: ?status=PENDING|ACCEPTED|DECLINED|WITHDRAWN&taskId=<id>&page=1&limit=20
+GET {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests?status=PENDING
+Authorization: Bearer {{accessToken}}
+
+###
+# List the authenticated user's own requests
+# Optional query: ?status=PENDING|ACCEPTED|DECLINED|WITHDRAWN&page=1&limit=20
+GET {{baseUrl}}/api/date-extension-requests
+Authorization: Bearer {{accessToken}}
+
+###
+# Get one request (requester or project owner/manager)
+GET {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests/<paste-request-id>
+Authorization: Bearer {{accessToken}}
+
+###
+# Accept a request (owner / manager). Applies the requested date and notifies the requester.
+# decisionNote is optional (max 500 chars).
+PATCH {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests/<paste-request-id>
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "status": "ACCEPTED",
+  "decisionNote": "The dependency delay is reasonable; moving the date."
+}
+
+###
+# Decline a request (owner / manager). The deadline is unchanged.
+PATCH {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests/<paste-request-id>
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "status": "DECLINED",
+  "decisionNote": "The final demo date is fixed by the partner."
+}
+
+###
+# Withdraw your own PENDING request (requester only)
+PATCH {{baseUrl}}/api/projects/<paste-project-id>/date-extension-requests/<paste-request-id>
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "status": "WITHDRAWN"
+}

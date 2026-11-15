@@ -66,6 +66,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS "ProjectInvitation_one_pending_uq"
   ON "ProjectInvitation" ("projectId", "inviteeId")
   WHERE "status" = 'PENDING';
 
+-- One PENDING date extension request per (project, requester, target).
+-- COALESCE handles project-level requests, where taskId is NULL.
+CREATE UNIQUE INDEX IF NOT EXISTS "DateExtensionRequest_one_pending_uq"
+  ON "DateExtensionRequest" ("projectId", "requesterId", COALESCE("taskId", ''))
+  WHERE "status" = 'PENDING';
+
 -- ---------------------------------------------------------------------
 -- 2. CHECK constraints — cheap, always-on data integrity.
 --    Postgres has no ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS, so

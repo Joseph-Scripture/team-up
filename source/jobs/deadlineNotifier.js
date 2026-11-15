@@ -31,6 +31,9 @@ async function sendDeadlineReminders() {
       status:   { in: ACTIVE_STATUSES },
       dueDate:  { gt: now, lte: cutoff },
       assigneeMemberId: { not: null },
+      // Only active memberships can receive reminders. A released/left member
+      // (including a deleted account) must not keep receiving task alerts.
+      assignee: { is: { status: "ACTIVE" } },
       project:  { deletedAt: null, status: { in: ["OPEN", "IN_PROGRESS"] } },
     },
     select: {
@@ -94,13 +97,18 @@ async function sendOverdueAlerts() {
       status:   { in: ACTIVE_STATUSES },
       dueDate:  { lt: now },
       assigneeMemberId: { not: null },
+      assignee: { is: { status: "ACTIVE" } },
       project:  { deletedAt: null, status: { in: ["OPEN", "IN_PROGRESS"] } },
     },
     select: {
       id: true, title: true, dueDate: true,
       projectId: true,
       project: {
-        select: { title: true, ownerId: true },
+        select: {
+          title: true,
+          ownerId: true,
+          owner: { select: { status: true, deletedAt: true } },
+        },
       },
       assignee: {
         select: {
@@ -137,8 +145,13 @@ async function sendOverdueAlerts() {
       dedupeKey: `task-overdue:${task.id}:assignee:${today}`,
     });
 
-    // Notify owner (separately — only if they're not the assignee)
-    if (task.project.ownerId !== task.assignee.userId) {
+    // Notify owner (separately — only if they're not the assignee and the
+    // owner account is still active).
+    if (
+      task.project.ownerId !== task.assignee.userId &&
+      task.project.owner?.status === "ACTIVE" &&
+      !task.project.owner?.deletedAt
+    ) {
       await createNotification({
         userId:     task.project.ownerId,
         type:       "TASK_OVERDUE",

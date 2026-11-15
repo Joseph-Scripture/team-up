@@ -232,10 +232,16 @@ router.patch(
   validate,
   updateProfile,
 );
-/** 
- *     delete:
+/**
+ * @openapi
+ * /api/profile/users/me:
+ *   delete:
  *     tags: [Profile]
  *     summary: Delete the authenticated user's account
+ *     description: >
+ *       Soft-deletes and anonymises the account, revokes all sessions, cancels
+ *       pending invitations, withdraws pending join requests, and ends active
+ *       project memberships. The User row is retained for referential integrity.
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -243,9 +249,7 @@ router.patch(
  *       401: { description: Missing, invalid, or expired token }
  *       404: { description: User not found }
  *       500: { description: Internal server error }
- 
-*/
-
+ */
 router.delete("/users/me", authenticate, deleteAccount);
 
 /**
