@@ -1,6 +1,7 @@
 import prisma from "../db/client.js";
 import { resolveVisibility } from "./profileVisibilityService.js";
 import { deleteCloudinaryAsset } from "./uploadService.js";
+import { createNotification } from "./notificationService.js";
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -191,37 +192,39 @@ export async function completeOnboarding(userId, { skills, ...profile }) {
 //   1. Revoke all sessions so existing access tokens stop working immediately.
 //   2. Cancel pending invitations and join requests so other users aren't left
 //      waiting on a ghost account.
-//   3. End all active project memberships.
+//   3. End active memberships, unassign their open tasks, and reopen full roles.
 //   4. Anonymise the User row and mark it deleted + deactivated.
-//   5. Best-effort delete the avatar from Cloudinary (fire-and-forget).
+//   5. Notify each affected project's owner and managers.
+//   6. Best-effort delete the avatar from Cloudinary (fire-and-forget).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function deleteUserProfile(userId) {
-  // Fetch the current avatar URL before we wipe it, so we can clean it up
-  // from Cloudinary after the DB transaction completes.
+  // Fetch identity details before we anonymise them.
   const existing = await prisma.user.findUnique({
     where:  { id: userId },
-    select: { avatarUrl: true },
+    select: { name: true, avatarUrl: true },
   });
   if (!existing) throw new HttpError(404, "User not found");
 
-  await prisma.$transaction(async (tx) => {
+  const memberships = await prisma.$transaction(async (tx) => {
+    const now = new Date();
+
     // 1. Revoke all active sessions — authenticate checks revokedAt on every
     //    request, so this immediately blocks any further use of live tokens.
     await tx.session.updateMany({
       where: { userId, revokedAt: null },
-      data:  { revokedAt: new Date() },
+      data:  { revokedAt: now },
     });
 
     // 2. Cancel pending outbound invitations (sent by this user as owner/manager).
     await tx.projectInvitation.updateMany({
-      where: { senderId: userId, status: "PENDING" },
+      where: { inviterId: userId, status: "PENDING" },
       data:  { status: "CANCELLED" },
     });
 
     // 3. Cancel pending inbound invitations (received by this user).
     await tx.projectInvitation.updateMany({
-      where: { recipientId: userId, status: "PENDING" },
+      where: { inviteeId: userId, status: "PENDING" },
       data:  { status: "CANCELLED" },
     });
 
@@ -231,11 +234,57 @@ export async function deleteUserProfile(userId) {
       data:  { status: "WITHDRAWN" },
     });
 
-    // 5. End all active project memberships.
-    await tx.projectMember.updateMany({
+    // 5. End each active membership with the same cleanup as leave/release:
+    //    unassign non-terminal tasks, then reopen a role that was full.
+    const activeMemberships = await tx.projectMember.findMany({
       where: { userId, status: "ACTIVE" },
-      data:  { status: "LEFT", endedAt: new Date() },
+      select: {
+        id: true,
+        roleId: true,
+        role: { select: { id: true, title: true, status: true } },
+        project: {
+          select: {
+            id: true,
+            title: true,
+            ownerId: true,
+            memberships: {
+              where: { status: "ACTIVE", accessRole: "MANAGER" },
+              select: { userId: true },
+            },
+          },
+        },
+      },
     });
+
+    for (const membership of activeMemberships) {
+      await tx.projectMember.update({
+        where: { id: membership.id },
+        data: {
+          status: "LEFT",
+          endedAt: now,
+          endReason: "Account deleted",
+        },
+      });
+
+      // Unassign open work so no deadlines/overdue alerts keep targeting the
+      // deleted account. Completed/cancelled tasks keep their history.
+      await tx.task.updateMany({
+        where: {
+          projectId: membership.project.id,
+          assigneeMemberId: membership.id,
+          status: { notIn: ["COMPLETED", "CANCELLED"] },
+        },
+        data: { assigneeMemberId: null },
+      });
+
+      // A full role must become discoverable again now that a slot is free.
+      if (membership.roleId && membership.role?.status === "CLOSED") {
+        await tx.projectRole.update({
+          where: { id: membership.roleId },
+          data:  { status: "OPEN" },
+        });
+      }
+    }
 
     // 6. Soft-delete + anonymise the User row.
     //    PII is cleared so the row satisfies GDPR-style right-to-erasure
@@ -243,7 +292,7 @@ export async function deleteUserProfile(userId) {
     await tx.user.update({
       where: { id: userId },
       data: {
-        deletedAt:    new Date(),
+        deletedAt:    now,
         status:       "DEACTIVATED",
         // Anonymise identity fields.
         name:         "Deleted User",
@@ -263,9 +312,45 @@ export async function deleteUserProfile(userId) {
         isAvailable:       false,
       },
     });
+
+    return activeMemberships;
   });
 
-  // 7. Best-effort Cloudinary cleanup — runs outside the transaction so a
+  // 7. Tell each affected project who left and why. Recipients are the owner
+  //    plus active managers, excluding the deleted account itself.
+  await Promise.all(
+    memberships.flatMap((membership) => {
+      const recipientIds = new Set([
+        membership.project.ownerId,
+        ...membership.project.memberships.map(({ userId: managerId }) => managerId),
+      ]);
+      recipientIds.delete(userId);
+
+      const roleLabel = membership.role?.title
+        ? ` Their ${membership.role.title} role is open again.`
+        : "";
+
+      return [...recipientIds].map((recipientId) =>
+        createNotification({
+          userId:     recipientId,
+          type:       "MEMBER_LEFT",
+          projectId:  membership.project.id,
+          entityType: "membership",
+          entityId:   membership.id,
+          title:      `A member left ${membership.project.title}`,
+          message:    `${existing.name} left ${membership.project.title} because their account was deleted.${roleLabel}`,
+          data: {
+            projectId: membership.project.id,
+            roleTitle: membership.role?.title ?? null,
+            reason: "ACCOUNT_DELETED",
+          },
+          dedupeKey: `member-left:${membership.id}`,
+        }),
+      );
+    }),
+  );
+
+  // 8. Best-effort Cloudinary cleanup — runs outside the transaction so a
   //    Cloudinary failure never rolls back the deletion.
   if (existing.avatarUrl) {
     void deleteCloudinaryAsset(existing.avatarUrl);

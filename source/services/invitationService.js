@@ -124,6 +124,20 @@ export async function sendInvitation(senderId, projectId, { inviteeId, roleId, m
 
   // ── 8. No existing PENDING invitation for this (project, invitee) pair ────
   const now = new Date();
+
+  // Expired invitations keep status PENDING until someone tries to accept or
+  // list them. The partial unique index also treats them as PENDING, so they
+  // would block a fresh invitation for the same pair. Close stale rows first.
+  await prisma.projectInvitation.updateMany({
+    where: {
+      projectId,
+      inviteeId,
+      status: "PENDING",
+      expiresAt: { lt: now },
+    },
+    data: { status: "EXPIRED" },
+  });
+
   const pendingInvitation = await prisma.projectInvitation.findFirst({
     where: {
       projectId,
@@ -670,6 +684,7 @@ export async function findCollaborators(
   const safePage  = Math.max(1, Number(page));
   const safeLimit = Math.min(MAX_PER_PAGE, Math.max(1, Number(limit)));
   const skip      = (safePage - 1) * safeLimit;
+  const now       = new Date();
 
   // Normalise skill IDs array — remove falsy/blank values
   const skillIds = (Array.isArray(skills) ? skills : [skills])
@@ -715,9 +730,17 @@ export async function findCollaborators(
     deletedAt:             null,
     onboardingCompletedAt: { not: null },
 
-    // Hard exclusions (relations that don't conflict with the AND array)
-    receivedInvitations: { none: { projectId, status: "PENDING" } },
-    joinRequests:        { none: { projectId, status: "PENDING" } },
+    // Hard exclusions (relations that don't conflict with the AND array).
+    // Only *live* pending invitations exclude a user; an expired row that has
+    // not been swept to EXPIRED yet must not hide them from the owner.
+    receivedInvitations: {
+      none: {
+        projectId,
+        status: "PENDING",
+        OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+      },
+    },
+    joinRequests: { none: { projectId, status: "PENDING" } },
 
     // Compose membership conditions safely via AND
     AND: andConditions,

@@ -41,6 +41,15 @@ export async function createNotification({
   dedupeKey,
 }) {
   try {
+    // Never write notifications for deleted or deactivated accounts. This is a
+    // central guard so background jobs and legacy assignments cannot keep
+    // producing notifications for an account that no longer exists.
+    const recipient = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true, deletedAt: true },
+    });
+    if (!recipient || recipient.deletedAt || recipient.status !== "ACTIVE") return;
+
     await prisma.notification.create({
       data: {
         userId,
