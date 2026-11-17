@@ -112,6 +112,14 @@ enum ReviewDecision {
   CHANGES_REQUESTED
 }
 
+// The life cycle of a handover request.
+enum HandoverRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
 enum EvidenceType {
   REPOSITORY
   LIVE_DEMO
@@ -132,12 +140,15 @@ enum NotificationType {
   TASK_COMMENTED
   TASK_DEADLINE
   TASK_OVERDUE
+  TASK_HANDOVER_REQUEST
+  TASK_HANDOVER_DECIDED
   DATE_EXTENSION_REQUEST
   DATE_EXTENSION_DECIDED
   MILESTONE_UPDATE
   TEAM_UPDATE
   CONTRIBUTION_REVIEW
   PROJECT_COMPLETED
+  EVIDENCE_ADDED
 }
 
 enum NotificationChannel {
@@ -207,7 +218,13 @@ model User {
   // Visibility settings — null means all public (default). When set, each
   // boolean flag controls whether the field is shown on the public profile.
   // Shape: { showName, showHeadline, showSkills, showSkillLevels,
-  //          showGoals, showAvailability, showPreferredDuration }
+  //          showGoals, showAvailability, showPreferredDuration,
+  //          showProfile, shareContactWithTeam }
+  //
+  // showProfile          — master switch. When false the user is hidden from
+  //                        public profile lookups (teammates still see them).
+  // shareContactWithTeam — when false, teammates cannot read the user's
+  //                        contact details (email / links / location).
   visibilitySettings Json?
 
   role   UserRole   @default(USER)
@@ -227,6 +244,9 @@ model User {
   reviewedRequests    JoinRequest[]       @relation("JoinReviewer")
   sentInvitations     ProjectInvitation[] @relation("InvitationSender")
   receivedInvitations ProjectInvitation[] @relation("InvitationRecipient")
+
+  handoverRequestsMade   TaskHandoverRequest[] @relation("HandoverRequester")
+  handoverRequestsDecided TaskHandoverRequest[] @relation("HandoverDecider")
 
   createdTasks Task[]        @relation("TaskCreator")
   taskComments TaskComment[]
@@ -356,6 +376,9 @@ model Project {
   description String  @db.Text
   problem     String? @db.Text
   outcome     String? @db.Text
+  // The final outcome the owner writes when completing the project. Kept
+  // separate from `outcome` (the expected outcome captured in the wizard).
+  completionOutcome String? @db.Text
 
   status      ProjectStatus @default(DRAFT)
   projectType ProjectType?
@@ -380,6 +403,12 @@ model Project {
 
   deletedAt DateTime? @db.Timestamptz(3)
 
+  // Visibility of the project page. The project page is PRIVATE to the team
+  // (owner + active members) until the project is shared. Publishing a draft
+  // shares it automatically so it can be discovered and joined; the owner can
+  // unshare it again at any time to make the page private to the team.
+  isShared Boolean @default(false)
+
   ownerId String
   owner   User   @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
 
@@ -396,6 +425,7 @@ model Project {
   notifications         Notification[]
   activityLogs          ActivityLog[]
   dateExtensionRequests DateExtensionRequest[]
+  handoverRequests      TaskHandoverRequest[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -486,6 +516,8 @@ model ProjectMember {
 
   contributions Contribution[]
   assignedTasks Task[]         @relation("TaskAssignee")
+
+  handoverRequests TaskHandoverRequest[]
 
   @@unique([projectId, id])
   @@index([projectId, userId])
@@ -612,6 +644,7 @@ model Task {
   comments              TaskComment[]
   contributions         Contribution[]
   dateExtensionRequests DateExtensionRequest[]
+  handoverRequests      TaskHandoverRequest[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -676,6 +709,11 @@ model Contribution {
   submittedAt DateTime           @default(now()) @db.Timestamptz(3)
   confirmedAt DateTime?          @db.Timestamptz(3)
 
+  // Two-step confirmation. The contributor reviews their own summary first
+  // (memberAcknowledgedAt), then a teammate confirms it. A confirmation is
+  // only allowed once the summary has been acknowledged.
+  memberAcknowledgedAt DateTime? @db.Timestamptz(3)
+
   project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   member  ProjectMember @relation(fields: [projectId, memberId], references: [projectId, id], onDelete: NoAction)
   task    Task?         @relation(fields: [projectId, taskId], references: [projectId, id], onDelete: NoAction)
@@ -737,6 +775,7 @@ model ProjectEvidence {
   createdBy User    @relation("EvidenceCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
 
   @@index([projectId, createdAt])
   @@index([createdById])
@@ -780,6 +819,41 @@ model DateExtensionRequest {
   @@index([requesterId, status])
   @@index([taskId, status])
   @@index([reviewedAt])
+}
+
+// -------------------- TASK HANDOVER REQUESTS --------------------
+
+// "Hand it over" from the overdue prompt. The request itself NEVER changes the
+// task owner — only the project owner does, by reassigning the task manually.
+// A request that is still PENDING when the owner reassigns the task is
+// resolved as ACCEPTED.
+model TaskHandoverRequest {
+  id        String  @id @default(cuid())
+  projectId String
+  taskId    String
+
+  // The member who owns the task and asked for it to be handed over.
+  requesterMemberId String
+  requesterId       String
+
+  status    HandoverRequestStatus @default(PENDING)
+  note      String?               @db.Text
+
+  decidedById String?
+  decidedAt   DateTime?            @db.Timestamptz(3)
+
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task           Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requesterMember ProjectMember @relation(fields: [requesterMemberId], references: [id], onDelete: Cascade)
+  requester      User          @relation("HandoverRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  decidedBy      User?         @relation("HandoverDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([projectId, status])
+  @@index([taskId])
+  @@index([requesterId, status])
 }
 
 // -------------------- NOTIFICATIONS AND AUDIT --------------------

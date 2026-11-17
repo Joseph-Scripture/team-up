@@ -96,6 +96,17 @@ export async function resetPassword(token, password) {
     throw new PasswordResetError("Invalid or expired password reset link");
   }
 
+  // A deleted/deactivated account must never be re-activated by a link that
+  // was issued before the account was closed.
+  const tokenOwner = await prisma.user.findUnique({
+    where: { id: authToken.userId },
+    select: { status: true, deletedAt: true },
+  });
+  if (!tokenOwner || tokenOwner.deletedAt || tokenOwner.status !== "ACTIVE") {
+    await prisma.authToken.deleteMany({ where: { id: authToken.id } });
+    throw new PasswordResetError("Invalid or expired password reset link");
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     // updateMany makes consumption atomic if two requests submit the same token.
     const consumed = await tx.authToken.updateMany({

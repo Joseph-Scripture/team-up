@@ -14,6 +14,7 @@ import dateExtensionRoutes, { requesterRouter as dateExtensionRequesterRouter } 
 import notificationRoutes from "./source/routes/notificationRoutes.js";
 import uploadRoutes       from "./source/routes/uploadRoutes.js";
 import { apiLimiter }      from "./source/middleware/ratelimiter.js";
+import { startDeadlineNotifier } from "./source/jobs/deadlineNotifier.js";
 
 const app = express();
 
@@ -130,7 +131,7 @@ app.use("/api/uploads",       uploadRoutes);
 
 /**
  * @openapi
- * /:
+ * /health:
  *   get:
  *     tags: [General]
  *     summary: Get the API health message
@@ -148,6 +149,29 @@ app.get("/health", (req, res) => {
 
     res.status(200).json({"message":"The api is working fine. This is the health endpoint "})
 });
+
+// The root path answers the same payload so the documented "/" entry in the
+// OpenAPI spec matches a route that actually exists.
+app.get("/", (req, res) => {
+    res.status(200).json({ message: "Welcome to the TeamUP API" });
+});
+
+/**
+ * @openapi
+ * /:
+ *   get:
+ *     tags: [General]
+ *     summary: Get the API welcome message
+ *     responses:
+ *       200:
+ *         description: Welcome message
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string, example: Welcome to the TeamUP API }
+ */
 
 // ── Centralized error handler ────────────────────────────────────────────────
 // Keep every error response JSON-shaped. Multer and body-parser errors would
@@ -179,4 +203,12 @@ app.listen(config.PORT, () => {
 
   console.log(`Server is running on port ${config.PORT}`);
 
+  // Deadline reminders (08:00 UTC) and overdue alerts (09:00 UTC). These are
+  // what power the overdue prompt the team sees — without them no overdue
+  // notification is ever sent.
+  try {
+    startDeadlineNotifier();
+  } catch (err) {
+    console.error("Could not start the deadline notifier:", err.message);
+  }
 });

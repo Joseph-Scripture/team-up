@@ -48,6 +48,16 @@ function handleError(res, error) {
  *                     showGoals:             { type: boolean }
  *                     showAvailability:      { type: boolean }
  *                     showPreferredDuration: { type: boolean }
+ *                     showProfile:
+ *                       type: boolean
+ *                       description: >
+ *                         Master switch. When false the profile is hidden from
+ *                         visitors (teammates still see the user).
+ *                     shareContactWithTeam:
+ *                       type: boolean
+ *                       description: >
+ *                         When false, teammates cannot read this user's contact
+ *                         details (email / links / location).
  */
 export async function GetVisibilitySettings(req, res) {
   try {

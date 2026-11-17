@@ -175,8 +175,25 @@ const sharedRules = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// completeRules — applied by POST /api/projects/:id/complete
+//
+// Only the final outcome comes from the client. Every other requirement
+// (deliverables, confirmed contributions, no open tasks) is checked by the
+// service against the real project data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const completeRules = [
+  body("outcome")
+    .isString().withMessage("A final outcome is required").bail()
+    .trim()
+    .isLength({ min: 1, max: 5000 })
+    .withMessage("outcome must be 1 to 5000 characters"),
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // saveDraftRules — title required. Used by POST /api/projects (create).
 // ─────────────────────────────────────────────────────────────────────────────
+
 export const saveDraftRules = [
   body("title")
     .isString().withMessage("Title is required").bail()

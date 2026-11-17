@@ -42,6 +42,7 @@ import {
 } from "../controllers/taskController.js";
 import {
   ListProjectMembers,
+  GetMemberContact,
   ReleaseMember,
   LeaveProject,
 } from "../controllers/memberController.js";
@@ -125,6 +126,12 @@ router.post("/members/leave",
 
 router.get("/members",
   projectIdParamRule, validate, ListProjectMembers);
+
+// Contact details of a teammate — ACTIVE members of the project only.
+router.get("/members/:memberId/contact",
+  [param("projectId").isString().trim().notEmpty(),
+   param("memberId").isString().trim().notEmpty()],
+  validate, GetMemberContact);
 
 router.post("/members/:memberId/release",
   releaseMemberRules, validate, ReleaseMember);

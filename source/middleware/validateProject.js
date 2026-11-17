@@ -1,5 +1,21 @@
 import { validationResult } from "express-validator";
-import { saveDraftRules, updateDraftRules, publishRules } from "../validation/projectSchemas.js";
+import {
+  saveDraftRules,
+  updateDraftRules,
+  publishRules,
+  completeRules,
+} from "../validation/projectSchemas.js";
+
+/**
+ * Validates a Complete request.
+ *
+ * The final outcome is required — everything else is checked by the service
+ * against the real project data (deliverables, contributions, open tasks).
+ */
+export const validateComplete = [
+  ...completeRules,
+  check,
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core checker — same shape as the existing validateResults middleware but

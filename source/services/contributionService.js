@@ -20,6 +20,7 @@ export class ContributionError extends Error {
 const CONTRIBUTION_SELECT = {
   id: true, title: true, description: true,
   status: true, submittedAt: true, confirmedAt: true,
+  memberAcknowledgedAt: true,
   createdAt: true, updatedAt: true,
   member: {
     select: {
@@ -77,17 +78,19 @@ async function resolveProjectAccess(userId, projectId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * List contributions on a project. Supports optional ?status filter.
+ * List contributions on a project. Supports optional ?status filter and
+ * ?mine=true (only the caller's own contributions).
  * Any active member can call this.
  *
  * @param {string} userId
  * @param {string} projectId
  * @param {object} opts
  * @param {string} [opts.status]   — filter by ContributionStatus
+ * @param {boolean} [opts.mine]    — only the caller's own contributions
  * @param {number} [opts.page=1]
  * @param {number} [opts.limit=20]
  */
-export async function listContributions(userId, projectId, { status, page = 1, limit = 20 } = {}) {
+export async function listContributions(userId, projectId, { status, mine, page = 1, limit = 20 } = {}) {
   await resolveProjectAccess(userId, projectId);
 
   const VALID_STATUSES = ["PENDING_REVIEW", "CONFIRMED", "CHANGES_REQUESTED"];
@@ -100,6 +103,9 @@ export async function listContributions(userId, projectId, { status, page = 1, l
     ...(status && VALID_STATUSES.includes(status.toUpperCase()) && {
       status: status.toUpperCase(),
     }),
+    ...(mine === true || mine === "true" ? {
+      member: { userId },
+    } : {}),
   };
 
   const [contributions, total] = await Promise.all([
@@ -141,6 +147,125 @@ export async function getContribution(userId, projectId, contributionId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// submitContribution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A member submits their own contribution summary.
+ *
+ * The submission is the first of the two steps: the member reviews their own
+ * summary (acknowledgeContribution) and then a teammate confirms it.
+ *
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {object} body
+ * @param {string}  body.title
+ * @param {string} [body.description]
+ * @param {string} [body.taskId]      — optional link to a task on this project
+ * @param {string} [body.artifactUrl]  — external link (repo, demo, …)
+ * @param {string} [body.fileUrl]      — Cloudinary file url from POST /api/uploads
+ * @param {string} [body.fileType]     — evidence type for the uploaded file
+ */
+export async function submitContribution(userId, projectId, body) {
+  const { memberId } = await resolveProjectAccess(userId, projectId);
+  if (!memberId) {
+    throw new ContributionError("Only project members can submit a contribution", 403);
+  }
+
+  const { title, description, taskId, artifactUrl, fileUrl, fileType } = body;
+
+  if (taskId) {
+    const task = await prisma.task.findFirst({
+      where: { id: taskId, projectId },
+      select: { id: true },
+    });
+    if (!task) throw new ContributionError("Task not found on this project", 404);
+  }
+
+  const evidence = [];
+  if (artifactUrl) {
+    evidence.push({ url: artifactUrl, type: "LIVE_DEMO", title: "Artifact link" });
+  }
+  if (fileUrl) {
+    evidence.push({ url: fileUrl, type: fileType ?? "DOCUMENT", title: "Attached file" });
+  }
+
+  const contribution = await prisma.contribution.create({
+    data: {
+      projectId,
+      memberId,
+      taskId: taskId ?? null,
+      title: title.trim(),
+      description: description ?? null,
+      status: "PENDING_REVIEW",
+      // The member still has to review their own summary.
+      memberAcknowledgedAt: null,
+      evidence: evidence.length > 0 ? { create: evidence } : undefined,
+    },
+    select: CONTRIBUTION_SELECT,
+  });
+
+  return contribution;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// acknowledgeContribution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The contributor reviews their own contribution summary.
+ *
+ * Only the member the contribution belongs to can acknowledge it. Until a
+ * summary is acknowledged, no teammate is allowed to confirm it.
+ *
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {string} contributionId
+ */
+export async function acknowledgeContribution(userId, projectId, contributionId) {
+  await resolveProjectAccess(userId, projectId);
+
+  const contribution = await prisma.contribution.findFirst({
+    where: { id: contributionId, projectId },
+    select: {
+      id: true, status: true, title: true,
+      memberAcknowledgedAt: true,
+      member: { select: { id: true, userId: true } },
+    },
+  });
+
+  if (!contribution) throw new ContributionError("Contribution not found", 404);
+
+  if (contribution.member.userId !== userId) {
+    throw new ContributionError(
+      "Only the contributor can acknowledge their own summary",
+      403,
+    );
+  }
+
+  if (contribution.status === "CONFIRMED") {
+    throw new ContributionError("This contribution is already confirmed", 409);
+  }
+
+  // Idempotent — acknowledging twice is harmless.
+  if (contribution.memberAcknowledgedAt) {
+    const current = await prisma.contribution.findUnique({
+      where: { id: contributionId },
+      select: CONTRIBUTION_SELECT,
+    });
+    return current;
+  }
+
+  const updated = await prisma.contribution.update({
+    where: { id: contributionId },
+    data:  { memberAcknowledgedAt: new Date() },
+    select: CONTRIBUTION_SELECT,
+  });
+
+  return updated;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // reviewContribution
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -149,13 +274,16 @@ export async function getContribution(userId, projectId, contributionId) {
  *
  * Rules:
  *  - Reviewer must be an active project member
- *  - Reviewer cannot be the contributor (no self-review)
+ *  - Reviewer cannot be the contributor (no self-review), unless the reviewer
+ *    is the owner and the only active member of the project
+ *  - The contributor must have acknowledged their own summary first
+ *    (memberAcknowledgedAt) before a CONFIRMED decision is accepted
  *  - Contribution must be in PENDING_REVIEW state
  *  - Only Owner / Manager can confirm; any non-contributor member can request changes
  *  - CONFIRMED sets confirmedAt and fires CONTRIBUTION_REVIEW notification to contributor
  *  - Review is append-only — each decision is preserved in ContributionReview
- *  - A CHANGES_REQUESTED decision resets status back to PENDING_REVIEW so the
- *    contributor can resubmit
+ *  - A CHANGES_REQUESTED decision resets status back to PENDING_REVIEW (and
+ *    clears the acknowledgement) so the contributor can resubmit
  *
  * @param {string} reviewerId
  * @param {string} projectId
@@ -171,6 +299,7 @@ export async function reviewContribution(reviewerId, projectId, contributionId, 
     where: { id: contributionId, projectId },
     select: {
       id: true, status: true, title: true,
+      memberAcknowledgedAt: true,
       member: {
         select: {
           id: true,
@@ -186,9 +315,17 @@ export async function reviewContribution(reviewerId, projectId, contributionId, 
 
   // ── Business rules ────────────────────────────────────────────────────────
 
-  // Reviewer cannot be the contributor
+  // Reviewer cannot be the contributor — with one exception: a project with a
+  // single active member has no teammate to review it, so the owner may
+  // confirm their own summary.
   if (contribution.member.userId === reviewerId) {
-    throw new ContributionError("You cannot review your own contribution", 403);
+    const activeMembers = await prisma.projectMember.count({
+      where: { projectId, status: "ACTIVE" },
+    });
+    const isSoleOwner = role === "OWNER" && activeMembers === 1;
+    if (!isSoleOwner) {
+      throw new ContributionError("You cannot review your own contribution", 403);
+    }
   }
 
   // Only Owner / Manager can CONFIRM
@@ -196,6 +333,14 @@ export async function reviewContribution(reviewerId, projectId, contributionId, 
     throw new ContributionError(
       "Only the project owner or a manager can confirm a contribution",
       403,
+    );
+  }
+
+  // The member has to review their own summary before a teammate confirms it.
+  if (decision === "CONFIRMED" && !contribution.memberAcknowledgedAt) {
+    throw new ContributionError(
+      "The contributor has not acknowledged this summary yet — ask them to review it first",
+      409,
     );
   }
 
@@ -222,12 +367,17 @@ export async function reviewContribution(reviewerId, projectId, contributionId, 
       },
     });
 
-    // Update the contribution status and set confirmedAt when confirmed
+    // Update the contribution status and set confirmedAt when confirmed.
+    // Asking for changes puts the contribution back into PENDING_REVIEW and
+    // clears the acknowledgement — the member reviews the revised summary
+    // again and a teammate confirms it afterwards. The CHANGES_REQUESTED
+    // decision itself stays in the append-only review history.
     return tx.contribution.update({
       where: { id: contributionId },
       data: {
-        status:      decision,
+        status:      decision === "CONFIRMED" ? "CONFIRMED" : "PENDING_REVIEW",
         confirmedAt: decision === "CONFIRMED" ? now : null,
+        ...(decision === "CHANGES_REQUESTED" && { memberAcknowledgedAt: null }),
       },
       select: CONTRIBUTION_SELECT,
     });

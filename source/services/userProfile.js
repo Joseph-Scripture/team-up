@@ -2,6 +2,7 @@ import prisma from "../db/client.js";
 import { resolveVisibility } from "./profileVisibilityService.js";
 import { deleteCloudinaryAsset } from "./uploadService.js";
 import { createNotification } from "./notificationService.js";
+import { CacheKey, cacheDel, cacheDelPattern } from "../lib/cache.js";
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -193,9 +194,14 @@ export async function completeOnboarding(userId, { skills, ...profile }) {
 //   2. Cancel pending invitations and join requests so other users aren't left
 //      waiting on a ghost account.
 //   3. End active memberships, unassign their open tasks, and reopen full roles.
-//   4. Anonymise the User row and mark it deleted + deactivated.
-//   5. Notify each affected project's owner and managers.
-//   6. Best-effort delete the avatar from Cloudinary (fire-and-forget).
+//   4. Withdraw pending deadline-extension requests and drop outstanding
+//      auth tokens (password reset / email verification).
+//   5. Hand over the projects this account owned to an active manager (or the
+//      longest-standing member) so no project is left without an owner; close
+//      the project when nobody is left on the team.
+//   6. Anonymise the User row and mark it deleted + deactivated.
+//   7. Notify each affected project's owner and managers.
+//   8. Best-effort delete the avatar from Cloudinary (fire-and-forget).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function deleteUserProfile(userId) {
@@ -208,6 +214,9 @@ export async function deleteUserProfile(userId) {
 
   const memberships = await prisma.$transaction(async (tx) => {
     const now = new Date();
+    // Projects whose ownership moves to a successor member (or that get closed
+    // because nobody is left). Collected here and notified after the commit.
+    const ownershipTransfers = [];
 
     // 1. Revoke all active sessions — authenticate checks revokedAt on every
     //    request, so this immediately blocks any further use of live tokens.
@@ -216,25 +225,34 @@ export async function deleteUserProfile(userId) {
       data:  { revokedAt: now },
     });
 
-    // 2. Cancel pending outbound invitations (sent by this user as owner/manager).
+    // 2. Cancel pending invitations in both directions (sent by this user as
+    //    owner/manager, and received by this user) in a single statement.
     await tx.projectInvitation.updateMany({
-      where: { inviterId: userId, status: "PENDING" },
-      data:  { status: "CANCELLED" },
+      where: {
+        status: "PENDING",
+        OR: [{ inviterId: userId }, { inviteeId: userId }],
+      },
+      data: { status: "CANCELLED" },
     });
 
-    // 3. Cancel pending inbound invitations (received by this user).
-    await tx.projectInvitation.updateMany({
-      where: { inviteeId: userId, status: "PENDING" },
-      data:  { status: "CANCELLED" },
-    });
-
-    // 4. Withdraw pending and approved join requests made by this user.
+    // 3. Withdraw pending and approved join requests made by this user.
     await tx.joinRequest.updateMany({
       where: { requesterId: userId, status: { in: ["PENDING", "ACCEPTED"] } },
       data:  { status: "WITHDRAWN" },
     });
 
-    // 5. End each active membership with the same cleanup as leave/release:
+    // 4. Withdraw pending deadline-extension requests made by this user, so
+    //    owners/managers are not left reviewing a request from a ghost account.
+    await tx.dateExtensionRequest.updateMany({
+      where: { requesterId: userId, status: "PENDING" },
+      data:  { status: "WITHDRAWN" },
+    });
+
+    // 5. Invalidate every outstanding auth token (password reset, email
+    //    verification). A link issued before the deletion must not work.
+    await tx.authToken.deleteMany({ where: { userId } });
+
+    // 6. End each active membership with the same cleanup as leave/release:
     //    unassign non-terminal tasks, then reopen a role that was full.
     const activeMemberships = await tx.projectMember.findMany({
       where: { userId, status: "ACTIVE" },
@@ -256,12 +274,15 @@ export async function deleteUserProfile(userId) {
       },
     });
 
-    for (const membership of activeMemberships) {
-      await tx.projectMember.update({
-        where: { id: membership.id },
+    if (activeMemberships.length > 0) {
+      const memberIds = activeMemberships.map((m) => m.id);
+
+      // End every membership at once.
+      await tx.projectMember.updateMany({
+        where: { id: { in: memberIds } },
         data: {
-          status: "LEFT",
-          endedAt: now,
+          status:    "LEFT",
+          endedAt:   now,
           endReason: "Account deleted",
         },
       });
@@ -270,23 +291,81 @@ export async function deleteUserProfile(userId) {
       // deleted account. Completed/cancelled tasks keep their history.
       await tx.task.updateMany({
         where: {
-          projectId: membership.project.id,
-          assigneeMemberId: membership.id,
+          assigneeMemberId: { in: memberIds },
           status: { notIn: ["COMPLETED", "CANCELLED"] },
         },
         data: { assigneeMemberId: null },
       });
 
       // A full role must become discoverable again now that a slot is free.
-      if (membership.roleId && membership.role?.status === "CLOSED") {
-        await tx.projectRole.update({
-          where: { id: membership.roleId },
+      const roleIds = activeMemberships.map((m) => m.roleId).filter(Boolean);
+      if (roleIds.length > 0) {
+        await tx.projectRole.updateMany({
+          where: { id: { in: roleIds }, status: "CLOSED" },
           data:  { status: "OPEN" },
         });
       }
     }
 
-    // 6. Soft-delete + anonymise the User row.
+    // 7. Projects owned by this account must not be left ownerless.
+    //    A project whose owner no longer exists can never be managed again
+    //    (no one can approve join requests, publish, or close it), so
+    //    ownership is handed to an active manager — or, failing that, to the
+    //    longest-standing member. A project with nobody left is closed.
+    const ownedProjects = await tx.project.findMany({
+      where: { ownerId: userId, deletedAt: null },
+      select: {
+        id: true, title: true, slug: true,
+        memberships: {
+          where: { status: "ACTIVE", userId: { not: userId } },
+          orderBy: { joinedAt: "asc" },
+          select: {
+            id: true, userId: true, accessRole: true,
+            user: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    for (const project of ownedProjects) {
+      const successor =
+        project.memberships.find((m) => m.accessRole === "MANAGER") ??
+        project.memberships[0] ??
+        null;
+
+      if (successor) {
+        await tx.project.update({
+          where: { id: project.id },
+          data:  { ownerId: successor.userId },
+        });
+        await tx.projectMember.update({
+          where: { id: successor.id },
+          data:  { accessRole: "OWNER" },
+        });
+        ownershipTransfers.push({
+          projectId:    project.id,
+          projectTitle: project.title,
+          projectSlug:  project.slug,
+          newOwnerId:   successor.userId,
+          newOwnerName: successor.user.name,
+        });
+      } else {
+        // Nobody left to run it — close the project with the account.
+        await tx.project.update({
+          where: { id: project.id },
+          data:  { deletedAt: now },
+        });
+        ownershipTransfers.push({
+          projectId:    project.id,
+          projectTitle: project.title,
+          projectSlug:  project.slug,
+          newOwnerId:   null,
+          newOwnerName: null,
+        });
+      }
+    }
+
+    // 8. Soft-delete + anonymise the User row.
     //    PII is cleared so the row satisfies GDPR-style right-to-erasure
     //    without breaking referential integrity.
     await tx.user.update({
@@ -313,13 +392,18 @@ export async function deleteUserProfile(userId) {
       },
     });
 
-    return activeMemberships;
+    return { activeMemberships, ownershipTransfers };
+  }, {
+    // This transaction touches many tables. The client-wide timeout covers
+    // most cases; this one gets its own, larger budget to be safe.
+    timeout: 120000,
+    maxWait: 30000,
   });
 
-  // 7. Tell each affected project who left and why. Recipients are the owner
+  // 9. Tell each affected project who left and why. Recipients are the owner
   //    plus active managers, excluding the deleted account itself.
   await Promise.all(
-    memberships.flatMap((membership) => {
+    memberships.activeMemberships.flatMap((membership) => {
       const recipientIds = new Set([
         membership.project.ownerId,
         ...membership.project.memberships.map(({ userId: managerId }) => managerId),
@@ -350,7 +434,41 @@ export async function deleteUserProfile(userId) {
     }),
   );
 
-  // 8. Best-effort Cloudinary cleanup — runs outside the transaction so a
+  // 10. Tell the successor who inherited the project ownership. Without this
+  //    the new owner has no idea they are now responsible for the project.
+  await Promise.all(
+    memberships.ownershipTransfers
+      .filter((transfer) => transfer.newOwnerId)
+      .map((transfer) =>
+        createNotification({
+          userId:     transfer.newOwnerId,
+          type:       "MEMBER_JOINED",
+          projectId:  transfer.projectId,
+          entityType: "project",
+          entityId:   transfer.projectId,
+          title:      `You are now the owner of ${transfer.projectTitle}`,
+          message:    `The previous owner's account was deleted, so you became the owner of ${transfer.projectTitle}.`,
+          data: {
+            projectId:   transfer.projectId,
+            projectSlug: transfer.projectSlug,
+            reason:      "ACCOUNT_DELETED",
+          },
+          dedupeKey: `project-owner-transfer:${transfer.projectId}:${transfer.newOwnerId}`,
+        }),
+      ),
+  );
+
+  // 11. Invalidate the caches that still mention this account or the projects
+  //    it owned. Cached project payloads embed the owner id and title.
+  await cacheDel(
+    CacheKey.projectsMine(userId),
+    CacheKey.profile(userId),
+    ...memberships.activeMemberships.map((m) => CacheKey.project(m.project.id)),
+    ...memberships.ownershipTransfers.map((t) => CacheKey.project(t.projectId)),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
+  // 12. Best-effort Cloudinary cleanup — runs outside the transaction so a
   //    Cloudinary failure never rolls back the deletion.
   if (existing.avatarUrl) {
     void deleteCloudinaryAsset(existing.avatarUrl);

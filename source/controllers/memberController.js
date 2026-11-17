@@ -1,6 +1,7 @@
 import { matchedData } from "express-validator";
 import {
   listProjectMembers,
+  getMemberContact,
   releaseMember,
   leaveProject,
   MemberError,
@@ -43,6 +44,48 @@ export async function ListProjectMembers(req, res) {
     const { projectId } = matchedData(req, { locations: ["params"] });
     const members       = await listProjectMembers(req.userId, projectId);
     return res.status(200).json({ members });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/projects/:projectId/members/:memberId/contact
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{projectId}/members/{memberId}/contact:
+ *   get:
+ *     tags: [Members]
+ *     summary: Get a teammate's contact details
+ *     description: >
+ *       Contact details are never exposed to visitors, pending invitees, or the
+ *       project owner — only to people who are already ACTIVE members of the
+ *       same project. The member can opt out with the `shareContactWithTeam`
+ *       visibility flag.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: memberId
+ *         required: true
+ *         schema: { type: string }
+ *         description: ProjectMember.id (not the user's id)
+ *     responses:
+ *       200: { description: The teammate's contact details }
+ *       403: { description: Not a member of the project, or contact sharing is off }
+ *       404: { description: Project or member not found }
+ */
+export async function GetMemberContact(req, res) {
+  try {
+    const { projectId, memberId } = matchedData(req, { locations: ["params"] });
+    const contact = await getMemberContact(req.userId, projectId, memberId);
+    return res.status(200).json({ contact });
   } catch (err) {
     return handleError(res, err);
   }

@@ -1,4 +1,5 @@
 import prisma from "../db/client.js";
+import { getTeamHealthForProjects } from "./teamHealthService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -370,6 +371,9 @@ export async function getRecommendedProjects(userId, userContext, limit = DEFAUL
       status: "OPEN",
       publishedAt: { not: null },
       deletedAt: null,
+      // Only shared projects can be recommended — an unshared project page is
+      // private to its team.
+      isShared: true,
       memberships: { none: { userId, status: "ACTIVE" } },
       joinRequests: { none: { requesterId: userId, status: "PENDING" } },
       invitations: { none: { inviteeId: userId, status: "PENDING" } },
@@ -685,6 +689,15 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
   const ownedWithCounts = ownedProjects.map(withTaskCounts);
   const memberWithCounts = memberProjects.map(withTaskCounts);
 
+  // ── 4b. Team health — ONE status per project, for the whole team ─────────
+  const healthMap = await getTeamHealthForProjects([...ownedWithCounts, ...memberWithCounts]);
+  const withHealth = (project) => ({
+    ...project,
+    teamHealth: healthMap.get(project.id) ?? null,
+  });
+  const ownedWithHealth = ownedWithCounts.map(withHealth);
+  const memberWithHealth = memberWithCounts.map(withHealth);
+
   // ── 5. Decide view and fetch recommendations when needed ──────────────────
   // "Active" here means the user has work to display — OPEN or IN_PROGRESS.
   // A user who only has DRAFTs is nudged toward discovery too.
@@ -702,8 +715,8 @@ export async function getDashboardData(userId, { recommendationLimit = DEFAULT_R
     onboarding: { completed: true, completedAt: user.onboardingCompletedAt },
     // PROJECTS → show the workspace view; DISCOVERY → show recommendations
     view: hasActiveWork ? "PROJECTS" : "DISCOVERY",
-    ownedProjects: ownedWithCounts,
-    memberProjects: memberWithCounts,
+    ownedProjects: ownedWithHealth,
+    memberProjects: memberWithHealth,
     attentionTasks: attentionTasks.map((t) => ({
       ...t,
       daysOverdue:

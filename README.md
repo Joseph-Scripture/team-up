@@ -96,6 +96,9 @@ Copy `.env.example` to `.env`. `.env` is gitignored — **never commit it**.
 | `EMAIL_FROM`            | for reset emails | — | Sender shown in reset emails, e.g. `"TeamUP <no-reply@example.com>"`. Must be allowed by SendLiberty. |
 | `EMAIL_REPLY_TO`        | no       | —           | Optional Reply-To address for reset emails. |
 | `SEND_LIBERTY_URL`      | no       | `https://sendliberty.com/api/send` | Endpoint override, useful for tests/stubs. |
+| `TEAM_HEALTH_INACTIVITY_DAYS` | no | `14` | Days without activity before a member is flagged inactive in team health. |
+| `TEAM_HEALTH_CHECK_IN_INTERVAL_DAYS` | no | `7` | Weekly check-in window used by the missed-check-in signal. |
+| `TEAM_HEALTH_REVIEW_STALE_DAYS` | no | `3` | Days an `IN_REVIEW` task may sit before it counts as stuck. |
 
 Notes:
 
@@ -175,9 +178,10 @@ Base URL: `http://localhost:4000`
 
 ### General
 
-| Method | Path  | Auth | Description |
-| ------ | ----- | ---- | ----------- |
-| GET    | `/`   | —    | Welcome message / health check. |
+| Method | Path      | Auth | Description |
+| ------ | --------- | ---- | ----------- |
+| GET    | `/`       | —    | Welcome message. |
+| GET    | `/health` | —    | Health check. |
 
 ### Auth — `/api/auth`
 
@@ -195,9 +199,234 @@ Base URL: `http://localhost:4000`
 | Method | Path                          | Auth   | Description |
 | ------ | ----------------------------- | ------ | ----------- |
 | GET    | `/skills`                     | —      | Full skills catalogue. Optional query: `q` (partial name match) and `category`, both case-insensitive. |
+| GET    | `/skills/categories`          | —      | Distinct, sorted skill-category names. |
 | GET    | `/users/me`                   | Bearer | Current user's profile. |
 | PATCH  | `/users/me`                   | Bearer | Partial profile update, including `avatarUrl`. Send `avatarUrl: null` to remove the picture. |
+| DELETE | `/users/me`                   | Bearer | Delete the account: soft-deletes and anonymises the user, revokes all sessions, cancels pending invitations/join requests, ends memberships, and hands owned projects over to an active manager (closing them when nobody is left). |
 | PUT    | `/users/me/onboarding`        | Bearer | Save onboarding: headline, bio, links, goals, availability, preferred project duration, skills, optional avatar. |
+| GET    | `/users/me/visibility`        | Bearer | Visibility settings of the current user. |
+| PATCH  | `/users/me/visibility`        | Bearer | Update visibility settings (see below). |
+| GET    | `/users/:userId`              | Bearer | Public profile of another user. **404** when that user turned off "Display on my profile" and you are not on their team. |
+| GET    | `/users/:userId/completed-projects` | Bearer | Completed projects of another user. |
+
+#### Visibility flags (`PATCH /api/profile/users/me/visibility`)
+
+| Flag | Effect |
+| ---- | ------ |
+| `showProfile` | **Master switch** ("Display on my profile"). When `false` the public profile is hidden from visitors — they get `404`. People who already share a team with you still see you, so the workspace keeps working. |
+| `shareContactWithTeam` | When `false`, teammates cannot read your contact details (email / links / location). Default `true`. |
+| `showName`, `showHeadline`, `showSkills`, `showSkillLevels`, `showGoals`, `showAvailability`, `showPreferredDuration` | Hide a single field on the public profile. |
+
+#### Contact details
+
+`GET /api/projects/:projectId/members/:memberId/contact` returns a teammate's
+email, links and location. It is readable **only by ACTIVE members of that
+project** — visitors, pending invitees and everybody else get `403`, and a
+member who set `shareContactWithTeam: false` is never exposed.
+
+### Projects — `/api/projects`
+
+| Method | Path                                   | Auth   | Description |
+| ------ | -------------------------------------- | ------ | ----------- |
+| GET    | `/`                                    | Bearer | Browse / search published projects. |
+| POST   | `/`                                    | Bearer | Create a project draft. |
+| GET    | `/mine`                                | Bearer | The current user's drafts + published projects. |
+| GET    | `/recommended`                         | Bearer | Ranked project recommendations. |
+| GET    | `/:id`                                 | Bearer | A single project (carries `teamHealth` for team members). |
+| PUT    | `/:id`                                 | Bearer | Update a draft. |
+| DELETE | `/:id`                                 | Bearer | Soft-delete a project. |
+| POST   | `/:id/publish`                         | Bearer | Publish a draft (DRAFT → OPEN). Publishing also shares the project page. |
+| POST   | `/:id/share`                           | Bearer | Share the project page — visible to everyone, listed in Discover. |
+| POST   | `/:id/unshare`                         | Bearer | Make the project page private to the team (owner + active members). |
+| POST   | `/:id/complete`                        | Bearer | Complete the project — **owner only**. See the completion rules below. |
+| GET    | `/:projectId/health`                   | Bearer | Team health of a project (team members only). |
+| GET    | `/:projectId/collaborators`            | Bearer | Eligible collaborators for a role. |
+
+#### Project sharing
+
+The project page is **private to the team** (owner + active members) until the
+project is shared. Publishing a draft shares it automatically — that is what
+makes a project discoverable and joinable — and the owner can unshare it again
+at any time. An unshared project is invisible in Discover and in the
+recommendations, and its page returns `404` for everybody outside the team.
+
+#### Completing a project (`POST /api/projects/:id/complete`)
+
+Only the project owner can complete a project. The server validates every
+requirement — nothing can be skipped:
+
+1. the project must be `OPEN` or `IN_PROGRESS`,
+2. the owner must send a final `outcome`,
+3. the project must have at least one **deliverable**,
+4. **every active member** must have at least one `CONFIRMED` contribution
+   (the member reviews their own summary, a teammate confirms it),
+5. no contribution may still be waiting for a review,
+6. no task may still be open.
+
+When a requirement is not met the response is `409` with a `checks` array:
+
+```json
+{
+  "message": "The project is not ready to be completed yet",
+  "checks": [
+    { "code": "NO_DELIVERABLES", "message": "Add at least one deliverable before completing the project." },
+    { "code": "UNCONFIRMED_CONTRIBUTIONS", "message": "Every member needs a confirmed contribution…", "members": [{ "id": "…", "name": "…" }] }
+  ]
+}
+```
+
+On success the project becomes `COMPLETED`, `completedAt` and
+`completionOutcome` are set, an activity-log entry is written, every member
+(except the owner) gets a `PROJECT_COMPLETED` notification, and the caches are
+invalidated.
+
+### Project members, tasks and team — `/api/projects/:projectId`
+
+| Method | Path                                | Auth   | Description |
+| ------ | ----------------------------------- | ------ | ----------- |
+| GET    | `/milestones`                       | Bearer | List milestones. |
+| POST   | `/milestones`                       | Bearer | Create a milestone. |
+| PATCH  | `/milestones/:milestoneId`          | Bearer | Update a milestone. |
+| DELETE | `/milestones/:milestoneId`          | Bearer | Delete a milestone. |
+| GET    | `/tasks`                            | Bearer | List tasks. |
+| POST   | `/tasks`                            | Bearer | Create a task. |
+| GET    | `/tasks/:taskId`                    | Bearer | A single task. |
+| PATCH  | `/tasks/:taskId`                    | Bearer | Update a task. Setting `status: "COMPLETED"` may include a `contribution` block that creates the contribution. |
+| DELETE | `/tasks/:taskId`                    | Bearer | Delete a task (linked contributions are preserved and unlinked). |
+| GET    | `/tasks/:taskId/comments`           | Bearer | List task comments. |
+| POST   | `/tasks/:taskId/comments`           | Bearer | Add a comment. |
+| PATCH  | `/tasks/:taskId/comments/:commentId` | Bearer | Edit a comment. |
+| DELETE | `/tasks/:taskId/comments/:commentId` | Bearer | Delete a comment. |
+| GET    | `/updates`                          | Bearer | Team updates feed. |
+| POST   | `/updates`                          | Bearer | Post a team update. |
+| GET    | `/members`                          | Bearer | List active members. |
+| POST   | `/members/leave`                    | Bearer | Leave the project voluntarily. |
+| POST   | `/members/:memberId/release`        | Bearer | Owner/manager releases a member. |
+| GET    | `/members/:memberId/contact`        | Bearer | A teammate's contact details — active members of that project only. |
+
+### Contributions — `/api/projects/:projectId/contributions`
+
+Confirmation takes **two steps**: the member reviews their own summary first,
+then a teammate confirms it.
+
+| Method | Path                      | Auth   | Description |
+| ------ | ------------------------- | ------ | ----------- |
+| GET    | `/`                       | Bearer | List contributions. Query: `status`, `mine=true` (only yours), `page`, `limit`. |
+| POST   | `/`                       | Bearer | Submit **your own** contribution summary. |
+| GET    | `/summary`                | Bearer | Confirmed contributions only — used for the project-page summary. |
+| GET    | `/:contributionId`        | Bearer | A single contribution with its full review history. |
+| POST   | `/:contributionId/acknowledge` | Bearer | Review and acknowledge **your own** summary (step 2). |
+| POST   | `/:contributionId/review` | Bearer | Confirm or request changes (step 3). |
+
+Rules:
+
+- A contribution starts as `PENDING_REVIEW` with `memberAcknowledgedAt: null`.
+- Only the contributor can acknowledge their own summary (`403` otherwise);
+  acknowledging twice is harmless.
+- `CONFIRMED` is rejected with `409` while the summary is not acknowledged.
+- Only the **owner or a manager** can confirm (`403` for a plain member).
+- No self-review (`403`) — the one exception is a project with a single active
+  member, where the owner may confirm their own summary.
+- `CHANGES_REQUESTED` puts the contribution back into `PENDING_REVIEW` and
+  clears the acknowledgement, so the contributor reviews the revised summary
+  again. The decision stays in the append-only review history.
+
+### Deliverables — `/api/projects/:projectId/evidence`
+
+| Method | Path                      | Auth   | Description |
+| ------ | ------------------------- | ------ | ----------- |
+| GET    | `/`                       | Bearer | List the deliverables (any active member). |
+| POST   | `/`                       | Bearer | Add a deliverable — owner / manager only. Notifies the rest of the team. |
+| PATCH  | `/:evidenceId`            | Bearer | Update a deliverable (patch semantics) — owner / manager only. |
+| DELETE | `/:evidenceId`            | Bearer | Remove a deliverable — owner / manager only. |
+
+A deliverable is `{ title, description?, url, type }` where `type` is one of
+`REPOSITORY`, `LIVE_DEMO`, `DOCUMENT`, `IMAGE`, `VIDEO`, `OTHER`. Every
+deliverable carries `createdAt` and `updatedAt`. `PATCH` and `PUT` on
+`/:evidenceId` are equivalent — only the fields you send are written.
+
+### Team health
+
+**One status for the whole team** — never a score for an individual.
+
+| Status | When |
+| ------ | ---- |
+| `ON_TRACK` | Nothing is wrong. |
+| `NEEDS_ATTENTION` | An overdue task, a blocked task, a task stuck in review for more than 3 days, or a missed weekly check-in (nobody replied in the updates thread for 7 days). |
+| `AT_RISK` | A milestone is overdue, or a member has been inactive for more than 14 days. |
+
+When more than one condition applies the most serious one wins
+(`AT_RISK` > `NEEDS_ATTENTION` > `ON_TRACK`). Members who marked themselves as
+away (`awayUntil` in the future) are never flagged as inactive, and a
+one-person project is never flagged for a missed check-in.
+
+It is returned by `GET /api/projects/:projectId/health` and is embedded as
+`teamHealth` in the project detail, in `GET /api/projects/mine` and on every
+card of `GET /api/dashboard`. Only team members can read it — everybody else
+gets `404` (the endpoint deliberately does not reveal that the project exists).
+
+The thresholds can be tuned per deployment without a code change:
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `TEAM_HEALTH_INACTIVITY_DAYS` | `14` | Days without activity before a member is flagged inactive. |
+| `TEAM_HEALTH_CHECK_IN_INTERVAL_DAYS` | `7` | Weekly check-in window. |
+| `TEAM_HEALTH_REVIEW_STALE_DAYS` | `3` | Days an `IN_REVIEW` task may sit before it counts as stuck. |
+
+### Task handover
+
+| Method | Path                                          | Auth   | Description |
+| ------ | --------------------------------------------- | ------ | ----------- |
+| POST   | `/api/projects/:projectId/tasks/:taskId/handover-request` | Bearer | The current owner of the task asks for a handover. **Only sends a request.** |
+| GET    | `/api/projects/:projectId/handover-requests`   | Bearer | List the handover requests — owner and managers. |
+| POST   | `/api/projects/:projectId/handover-requests/:requestId/accept`  | Bearer | **Owner only.** Accept and name the new owner — accepting *is* the reassignment. |
+| POST   | `/api/projects/:projectId/handover-requests/:requestId/decline` | Bearer | Owner or manager declines — the task keeps its owner. |
+| POST   | `/api/projects/:projectId/handover-requests/:requestId/cancel`  | Bearer | The requester withdraws their own request. |
+
+The request itself **never changes the task owner**. Only the project owner
+does, either through `accept` (which reassigns in the same transaction) or by
+reassigning the task manually (`PATCH /tasks/:taskId` with `assigneeMemberId`);
+both resolve the pending request as `ACCEPTED`. Changing who owns a task is
+therefore **owner-only** — managers can read and decline requests, and can
+still edit every other task field, but they cannot transfer ownership.
+
+Pending requests are cancelled automatically when the requesting member leaves
+or is released from the project, so the owner never has to action a request
+from somebody who is no longer on the team.
+
+### Invitations, join requests and date extensions
+
+| Method | Path                                            | Auth   | Description |
+| ------ | ----------------------------------------------- | ------ | ----------- |
+| POST   | `/api/projects/:projectId/invitations`          | Bearer | Send an invitation. |
+| GET    | `/api/projects/:projectId/invitations`          | Bearer | Invitations sent for a project. |
+| GET    | `/api/invitations`                              | Bearer | Invitations received by the current user. |
+| POST   | `/api/invitations/:invitationId/accept`        | Bearer | Accept an invitation. |
+| POST   | `/api/invitations/:invitationId/decline`        | Bearer | Decline an invitation. |
+| POST   | `/api/projects/:projectId/join-requests`        | Bearer | Send a join request. |
+| GET    | `/api/projects/:projectId/join-requests`        | Bearer | Join requests for a project (owner/manager). |
+| GET    | `/api/projects/:projectId/join-requests/:requestId` | Bearer | One join request. |
+| POST   | `/api/projects/:projectId/join-requests/:requestId/approve` | Bearer | Approve a request. |
+| POST   | `/api/projects/:projectId/join-requests/:requestId/decline` | Bearer | Decline a request. |
+| GET    | `/api/join-requests`                           | Bearer | Requests sent by the current user. |
+| POST   | `/api/join-requests/:requestId/withdraw`       | Bearer | Withdraw a request. |
+| POST   | `/api/join-requests/:requestId/confirm`        | Bearer | Confirm commitment after approval (creates the membership). |
+| POST   | `/api/projects/:projectId/date-extension-requests` | Bearer | Request a new deadline. |
+| GET    | `/api/projects/:projectId/date-extension-requests` | Bearer | Deadline requests for a project. |
+| GET    | `/api/projects/:projectId/date-extension-requests/:requestId` | Bearer | One deadline request. |
+| PATCH  | `/api/projects/:projectId/date-extension-requests/:requestId` | Bearer | Accept / decline / withdraw a deadline request. |
+| GET    | `/api/date-extension-requests`                 | Bearer | Requests sent by the current user. |
+
+### Dashboard and notifications
+
+| Method | Path                                        | Auth   | Description |
+| ------ | ------------------------------------------- | ------ | ----------- |
+| GET    | `/api/dashboard`                            | Bearer | Dashboard summary. |
+| GET    | `/api/notifications`                        | Bearer | Notifications (unread by default; `?unreadOnly=false` for all). |
+| PATCH  | `/api/notifications/read-all`               | Bearer | Mark every notification as read. |
+| PATCH  | `/api/notifications/:notificationId/read`    | Bearer | Mark one notification as read. |
+| GET    | `/api/notifications/preferences`            | Bearer | Notification preference matrix. |
+| PUT    | `/api/notifications/preferences`            | Bearer | Upsert notification preferences. |
 
 ### Uploads — `/api/uploads`
 
