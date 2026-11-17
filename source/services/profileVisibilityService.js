@@ -3,6 +3,11 @@ import prisma from "../db/client.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // Default visibility — all fields public.
 // NULL in the DB is treated identically to this object.
+//
+// showProfile          — master switch. When false the user's public profile is
+//                        hidden from visitors (teammates still see them).
+// shareContactWithTeam — when false, teammates cannot read the user's contact
+//                        details (email / links / location).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_VISIBILITY = {
@@ -13,6 +18,8 @@ export const DEFAULT_VISIBILITY = {
   showGoals:             true,
   showAvailability:      true,
   showPreferredDuration: true,
+  showProfile:           true,
+  shareContactWithTeam: true,
 };
 
 export class VisibilityError extends Error {
@@ -69,6 +76,30 @@ export function applyVisibilityFilter(user, settings) {
   }
 
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// areTeammates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * True when two users are ACTIVE members of the same project.
+ *
+ * Teammates keep seeing each other even when a user hides their public
+ * profile, and they are the only group allowed to read contact details.
+ */
+export async function areTeammates(userId, otherUserId) {
+  if (!userId || !otherUserId || userId === otherUserId) return false;
+
+  const shared = await prisma.projectMember.count({
+    where: {
+      status: "ACTIVE",
+      userId,
+      project: { memberships: { some: { status: "ACTIVE", userId: otherUserId } } },
+    },
+  });
+
+  return shared > 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,14 +180,26 @@ export async function getPublicProfile(targetUserId, requesterId) {
 
   if (!user) throw new VisibilityError("User not found", 404);
 
+  const visibility = resolveVisibility(user.visibilitySettings);
+
   // Owner always sees their own full profile
   if (targetUserId === requesterId) {
     const { visibilitySettings, ...rest } = user;
     return {
       ...rest,
-      visibilitySettings: resolveVisibility(visibilitySettings),
+      visibilitySettings,
       isOwnProfile: true,
     };
+  }
+
+  // "Display on my profile" is off → the profile is hidden from visitors.
+  // People who already share a team with the user still see them, because
+  // hiding a profile must not break the workspace they work in.
+  if (!visibility.showProfile) {
+    const teammates = await areTeammates(requesterId, targetUserId);
+    if (!teammates) {
+      throw new VisibilityError("This profile is not available", 404);
+    }
   }
 
   const { visibilitySettings, ...rest } = user;

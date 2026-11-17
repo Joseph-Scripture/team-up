@@ -34,6 +34,16 @@ if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
   throw new Error("CLOUDINARY_URL must include cloud name, API key, and API secret");
 }
 
+function positiveInt(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 const FRONTEND_URL = (process.env.FRONTEND_URL ?? "http://localhost:5173").trim().replace(/\/$/, "");
 const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES ?? 30);
@@ -130,4 +140,11 @@ export default {
   // Redis is optional. When it is unavailable, cache helpers fall back to
   // direct database reads without affecting the API response.
   REDIS_URL: process.env.REDIS_URL?.trim() || null,
+
+  // Team health thresholds. The defaults match the product rules; the env
+  // overrides exist so a deployment can adapt them without a code change
+  // (they cover every project, so the status stays comparable across teams).
+  TEAM_HEALTH_INACTIVITY_DAYS:        positiveInt("TEAM_HEALTH_INACTIVITY_DAYS", 14),
+  TEAM_HEALTH_CHECK_IN_INTERVAL_DAYS: positiveInt("TEAM_HEALTH_CHECK_IN_INTERVAL_DAYS", 7),
+  TEAM_HEALTH_REVIEW_STALE_DAYS:      positiveInt("TEAM_HEALTH_REVIEW_STALE_DAYS", 3),
 };

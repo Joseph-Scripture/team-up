@@ -2,6 +2,8 @@ import { matchedData } from "express-validator";
 import {
   listContributions,
   getContribution,
+  submitContribution,
+  acknowledgeContribution,
   reviewContribution,
   getProjectContributionSummary,
   ContributionError,
@@ -130,6 +132,99 @@ export async function GetContribution(req, res) {
     const { projectId, contributionId } = matchedData(req, { locations: ["params"] });
     const result = await getContribution(req.userId, projectId, contributionId);
     return res.status(200).json({ contribution: result });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:projectId/contributions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{projectId}/contributions:
+ *   post:
+ *     tags: [Contributions]
+ *     summary: Submit your own contribution summary
+ *     description: >
+ *       First step of the two-step confirmation. The member submits what they
+ *       delivered, then reviews their own summary (acknowledge), and only then
+ *       can a teammate confirm it.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [title]
+ *             properties:
+ *               title:      { type: string, maxLength: 200 }
+ *               description: { type: string }
+ *               taskId:     { type: string, description: Optional task on this project }
+ *               artifactUrl: { type: string, format: uri }
+ *               fileUrl:    { type: string, format: uri, description: Cloudinary fileUrl from POST /api/uploads?context=contribution }
+ *               fileType:   { type: string, enum: [REPOSITORY, LIVE_DEMO, DOCUMENT, IMAGE, VIDEO, OTHER] }
+ *     responses:
+ *       201: { description: Contribution submitted }
+ *       400: { description: Validation error }
+ *       403: { description: Not a member of the project }
+ *       404: { description: Project or task not found }
+ */
+export async function SubmitContribution(req, res) {
+  try {
+    const { projectId } = matchedData(req, { locations: ["params"] });
+    const body = matchedData(req, { locations: ["body"] });
+    const contribution = await submitContribution(req.userId, projectId, body);
+    return res.status(201).json({ contribution });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:projectId/contributions/:contributionId/acknowledge
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{projectId}/contributions/{contributionId}/acknowledge:
+ *   post:
+ *     tags: [Contributions]
+ *     summary: Review and acknowledge your own contribution summary
+ *     description: >
+ *       Second step of the two-step confirmation. Only the contributor can
+ *       acknowledge their own summary, and a teammate can only confirm a
+ *       contribution once it has been acknowledged.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: contributionId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Summary acknowledged }
+ *       403: { description: Not the contributor }
+ *       404: { description: Contribution not found }
+ *       409: { description: Contribution is already confirmed }
+ */
+export async function AcknowledgeContribution(req, res) {
+  try {
+    const { projectId, contributionId } = matchedData(req, { locations: ["params"] });
+    const contribution = await acknowledgeContribution(req.userId, projectId, contributionId);
+    return res.status(200).json({ contribution });
   } catch (err) {
     return handleError(res, err);
   }

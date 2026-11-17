@@ -26,6 +26,7 @@ BEGIN
     'JoinRequest_one_pending_uq',
     'ProjectInvitation_one_pending_uq',
     'DateExtensionRequest_one_pending_uq',
+    'TaskHandoverRequest_one_pending_uq',
     -- Search / hot-path indexes (migration_extras.sql)
     'Project_search_gin',
     'User_name_trgm',

@@ -1,4 +1,5 @@
 import prisma from "../db/client.js";
+import { acceptPendingRequestsForTask } from "./handoverService.js";
 import { createNotification } from "./notificationService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,13 +374,25 @@ export async function updateTask(userId, projectId, taskId, fields) {
     }
   }
 
+  // Changing the task owner is the OWNER's job — a manager cannot hand a
+  // task to somebody else. This is also the only action that resolves a
+  // pending handover request.
+  if (assigneeMemberId !== undefined && role !== "OWNER") {
+    throw new TaskError(
+      "Only the project owner can change who owns a task",
+      403,
+    );
+  }
+
   // ── Validate assignee if being changed ────────────────────────────────────
+  let newAssigneeUserId = null;
   if (assigneeMemberId !== undefined && assigneeMemberId !== null) {
     const member = await prisma.projectMember.findFirst({
       where: { id: assigneeMemberId, projectId, status: "ACTIVE" },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
     if (!member) throw new TaskError("Assignee is not an active member of this project", 400);
+    newAssigneeUserId = member.userId;
   }
 
   // ── Validate milestone if being changed ───────────────────────────────────
@@ -512,6 +525,17 @@ export async function updateTask(userId, projectId, taskId, fields) {
           evidence: { select: { id: true, url: true, type: true, title: true } },
         },
       });
+    }
+
+    // Reassigning a task is the only thing that resolves a pending handover
+    // request — the request itself never changed the task owner.
+    if (
+      role === "OWNER" &&
+      assigneeMemberId !== undefined &&
+      assigneeMemberId !== null &&
+      assigneeMemberId !== task.assigneeMemberId
+    ) {
+      await acceptPendingRequestsForTask(tx, taskId, projectId, userId, newAssigneeUserId);
     }
 
     return { updatedTask: updated, createdContribution: contrib };

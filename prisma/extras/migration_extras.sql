@@ -72,6 +72,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS "DateExtensionRequest_one_pending_uq"
   ON "DateExtensionRequest" ("projectId", "requesterId", COALESCE("taskId", ''))
   WHERE "status" = 'PENDING';
 
+-- One PENDING handover request per task.
+CREATE UNIQUE INDEX IF NOT EXISTS "TaskHandoverRequest_one_pending_uq"
+  ON "TaskHandoverRequest" ("taskId")
+  WHERE "status" = 'PENDING';
+
 -- ---------------------------------------------------------------------
 -- 2. CHECK constraints — cheap, always-on data integrity.
 --    Postgres has no ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS, so

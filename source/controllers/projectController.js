@@ -1,3 +1,4 @@
+import { matchedData } from "express-validator";
 import {
   createDraft,
   updateDraft,
@@ -6,8 +7,14 @@ import {
   getProjectsByOwner,
   deleteProject,
   searchProjects,
+  setProjectSharing,
+  completeProject,
   ProjectError,
 } from "../services/projectService.js";
+import {
+  getProjectTeamHealth,
+  getTeamHealthForProjects,
+} from "../services/teamHealthService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -202,7 +209,13 @@ export async function PublishProject(req, res) {
 export async function GetMyProjects(req, res) {
   try {
     const projects = await getProjectsByOwner(req.user.id);
-    return res.status(200).json({ projects });
+
+    // One team-health status per project, shown on My Projects.
+    const healthMap = await getTeamHealthForProjects(projects);
+
+    return res.status(200).json({
+      projects: projects.map((p) => ({ ...p, teamHealth: healthMap.get(p.id) ?? null })),
+    });
   } catch (error) {
     return handleError(res, error);
   }
@@ -243,7 +256,193 @@ export async function GetProject(req, res) {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    return res.status(200).json({ project });
+    // Team health is private to the team — it is null for everybody else.
+    const teamHealth = await getProjectTeamHealth(project.id, req.user.id);
+
+    return res.status(200).json({ project: { ...project, teamHealth } });
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/projects/:projectId/health
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{projectId}/health:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get the team health of a project
+ *     description: >
+ *       ONE status for the whole team — never a score for an individual.
+ *       ON_TRACK (nothing wrong), NEEDS_ATTENTION (an overdue task, a blocked
+ *       task or a missed weekly check-in) or AT_RISK (an overdue milestone or a
+ *       member inactive for more than 14 days). When more than one condition
+ *       applies, the most serious one wins. Only team members can read it.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: The team health of the project }
+ *       404: { description: Project not found or not a team member }
+ */
+export async function GetProjectHealth(req, res) {
+  try {
+    const teamHealth = await getProjectTeamHealth(req.params.projectId, req.user.id);
+    if (!teamHealth) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    return res.status(200).json({ teamHealth });
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:id/complete
+// Only the owner can complete a project.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{id}/complete:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Complete the project
+ *     description: >
+ *       Only the project owner can complete a project. The server validates
+ *       every requirement: the owner must enter a final outcome, the project
+ *       must have at least one deliverable, every active member must have a
+ *       confirmed contribution (the member reviews their own summary, a
+ *       teammate confirms it), no contribution may still be waiting for a
+ *       review, and no task may still be open.
+ *
+ *       When a requirement is not met the response is 409 with a `checks` array
+ *       listing everything that is still missing.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [outcome]
+ *             properties:
+ *               outcome:
+ *                 type: string
+ *                 maxLength: 5000
+ *                 description: The final outcome of the project
+ *     responses:
+ *       200: { description: Project completed }
+ *       400: { description: The final outcome is missing }
+ *       403: { description: Not the project owner }
+ *       404: { description: Project not found }
+ *       409:
+ *         description: The project is not ready to be completed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 checks:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       code:    { type: string }
+ *                       message: { type: string }
+ */
+export async function CompleteProject(req, res) {
+  try {
+    const { outcome } = matchedData(req, { locations: ["body"] });
+    const project = await completeProject(req.params.id, req.user.id, outcome);
+    return res.status(200).json({ message: "Project completed successfully", project });
+  } catch (error) {
+    if (error instanceof ProjectError && error.checks) {
+      return res.status(error.status).json({ message: error.message, checks: error.checks });
+    }
+    return handleError(res, error);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:id/share  &  POST /api/projects/:id/unshare
+// The project page is private to the team until the owner shares it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/projects/{id}/share:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Share the project page
+ *     description: >
+ *       Only the owner can share or unshare a project. A shared project page is
+ *       visible to every authenticated user and appears in Discover and in
+ *       recommendations. An unshared project page is private to the team
+ *       (owner + active members) and disappears from the public listings.
+ *       Publishing a draft shares it automatically.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Project shared }
+ *       403: { description: Not the project owner }
+ *       404: { description: Project not found }
+ */
+export async function ShareProject(req, res) {
+  try {
+    const project = await setProjectSharing(req.params.id, req.user.id, true);
+    return res.status(200).json({ message: "Project shared successfully", project });
+  } catch (error) {
+    return handleError(res, error);
+  }
+}
+
+/**
+ * @openapi
+ * /api/projects/{id}/unshare:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Make the project page private to the team
+ *     description: >
+ *       Only the owner can share or unshare a project. Unsharing hides the
+ *       project page from everybody except the owner and the active members,
+ *       and removes it from Discover and recommendations. Members who already
+ *       joined keep full access.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Project unshared }
+ *       403: { description: Not the project owner }
+ *       404: { description: Project not found }
+ */
+export async function UnshareProject(req, res) {
+  try {
+    const project = await setProjectSharing(req.params.id, req.user.id, false);
+    return res.status(200).json({ message: "Project is now private to the team", project });
   } catch (error) {
     return handleError(res, error);
   }

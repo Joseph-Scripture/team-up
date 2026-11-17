@@ -1,14 +1,18 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/authenticate.js";
-import { validateDraft, validateDraftUpdate, validatePublish } from "../middleware/validateProject.js";
+import { validateDraft, validateDraftUpdate, validatePublish, validateComplete } from "../middleware/validateProject.js";
 import {
   CreateDraft,
   UpdateDraft,
   PublishProject,
   GetMyProjects,
   GetProject,
+  GetProjectHealth,
   DeleteProject,
   SearchProjects,
+  ShareProject,
+  UnshareProject,
+  CompleteProject,
 } from "../controllers/projectController.js";
 import { GetRecommendedProjects } from "../controllers/dashboardController.js";
 import { FindCollaborators } from "../controllers/invitationController.js";
@@ -18,6 +22,9 @@ import invitationRoutes from "./invitationRoutes.js";
 import joinRequestRoutes from "./joinRequestRoutes.js";
 import dateExtensionRoutes from "./dateExtensionRoutes.js";
 import taskRoutes        from "./taskRoutes.js";
+import contributionRoutes from "./contributionRoutes.js";
+import evidenceRoutes from "./evidenceRoutes.js";
+import handoverRoutes from "./handoverRoutes.js";
 
 const router = Router();
 
@@ -122,6 +129,36 @@ router.get("/:id", GetProject);
 
 /**
  * @openapi
+ * /api/projects/{projectId}/health:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get the team health of a project
+ *     description: >
+ *       One status for the whole team — never a score for an individual.
+ *       `AT_RISK` (an overdue milestone or an inactive member) wins over
+ *       `NEEDS_ATTENTION` (an overdue task, a blocked task, a task stuck in
+ *       review, or a missed check-in), which wins over `ON_TRACK`.
+ *
+ *       Only team members can read it. Everybody else gets `404` — the
+ *       endpoint deliberately cannot be used to discover that a project
+ *       exists, so "not allowed" and "not found" are indistinguishable.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: The team health payload (`status`, `reasons`, `signals`).
+ *       404:
+ *         description: Project not found, or the caller is not on the team.
+ */
+router.get("/:projectId/health", GetProjectHealth);
+
+/**
+ * @openapi
  * /api/projects/{id}:
  *   put:
  *     tags: [Projects]
@@ -151,6 +188,39 @@ router.put("/:id", validateDraftUpdate, UpdateDraft);
  *         schema: { type: string }
  */
 router.post("/:id/publish", validatePublish, PublishProject);
+
+/**
+ * @openapi
+ * /api/projects/{id}/complete:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Complete the project (owner only)
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post("/:id/complete", validateComplete, CompleteProject);
+
+/**
+ * @openapi
+ * /api/projects/{id}/share:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Share the project page
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post("/:id/share", ShareProject);
+
+/**
+ * @openapi
+ * /api/projects/{id}/unshare:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Make the project page private to the team
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post("/:id/unshare", UnshareProject);
 
 /**
  * @openapi
@@ -191,6 +261,32 @@ router.use("/:projectId/join-requests", joinRequestRoutes);
 // The :projectId param is forwarded via mergeParams in the sub-router.
 // ─────────────────────────────────────────────────────────────────────────────
 router.use("/:projectId/date-extension-requests", dateExtensionRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped contribution routes
+// Mounts: GET  /api/projects/:projectId/contributions
+//         GET  /api/projects/:projectId/contributions/summary
+//         GET  /api/projects/:projectId/contributions/:contributionId
+//         POST /api/projects/:projectId/contributions/:contributionId/review
+// The :projectId param is forwarded via mergeParams in the sub-router.
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId/contributions", contributionRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped deliverable routes
+// Mounts: GET/POST /api/projects/:projectId/evidence
+//         DELETE /api/projects/:projectId/evidence/:evidenceId
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId/evidence", evidenceRoutes);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project-scoped handover routes
+// Mounts: POST   /api/projects/:projectId/tasks/:taskId/handover-request
+//         GET    /api/projects/:projectId/handover-requests
+//         POST   /api/projects/:projectId/handover-requests/:requestId/decline
+//         POST   /api/projects/:projectId/handover-requests/:requestId/cancel
+// ─────────────────────────────────────────────────────────────────────────────
+router.use("/:projectId", handoverRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Project-scoped task, milestone, and team update routes

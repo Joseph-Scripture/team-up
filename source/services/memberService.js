@@ -1,5 +1,7 @@
 import prisma from "../db/client.js";
 import { createNotification } from "./notificationService.js";
+import { resolveVisibility } from "./profileVisibilityService.js";
+import { cancelPendingRequestsForMember } from "./handoverService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom error
@@ -57,6 +59,80 @@ export async function listProjectMembers(userId, projectId) {
       },
     },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getMemberContact
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read a teammate's contact details.
+ *
+ * Contact details are never exposed to visitors, pending invitees, or the
+ * owner of the project — only to people who are already ACTIVE members of
+ * the same project. The member can opt out with `shareContactWithTeam: false`.
+ *
+ * @param {string} userId   — the authenticated user asking
+ * @param {string} projectId
+ * @param {string} memberId — ProjectMember.id (not the user's id)
+ */
+export async function getMemberContact(userId, projectId, memberId) {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+    select: {
+      id: true,
+      ownerId: true,
+      memberships: {
+        where: { userId, status: "ACTIVE" },
+        select: { id: true },
+      },
+    },
+  });
+
+  if (!project) throw new MemberError("Project not found", 404);
+
+  // The requester must already be on the team.
+  if (project.ownerId !== userId && project.memberships.length === 0) {
+    throw new MemberError("Only members of this project can see contact details", 403);
+  }
+
+  const membership = await prisma.projectMember.findFirst({
+    where: { id: memberId, projectId, status: "ACTIVE" },
+    select: {
+      id: true,
+      userId: true,
+      user: {
+        select: {
+          id: true, name: true, email: true,
+          githubUrl: true, portfolioUrl: true,
+          location: true, timezone: true,
+          visibilitySettings: true,
+        },
+      },
+    },
+  });
+
+  if (!membership) throw new MemberError("Member not found on this project", 404);
+
+  const settings = resolveVisibility(membership.user.visibilitySettings);
+  if (!settings.shareContactWithTeam) {
+    throw new MemberError(
+      "This member does not share their contact details with the team",
+      403,
+    );
+  }
+
+  const { visibilitySettings, ...user } = membership.user;
+  return {
+    memberId: membership.id,
+    userId:    user.id,
+    name:      user.name,
+    email:     user.email,
+    githubUrl: user.githubUrl ?? null,
+    portfolioUrl: user.portfolioUrl ?? null,
+    location:  user.location ?? null,
+    timezone:  user.timezone ?? null,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,6 +213,10 @@ export async function releaseMember(requesterId, projectId, memberId, endReason)
       },
       data: { assigneeMemberId: null },
     });
+
+    // Cancel any pending handover requests from this member — they are no
+    // longer on the team so their requests cannot be acted on.
+    await cancelPendingRequestsForMember(tx, memberId, projectId, requesterId);
 
     // Reopen the role if it was CLOSED (it becomes available for new members)
     if (membership.roleId && membership.role?.status === "CLOSED") {
@@ -238,6 +318,10 @@ export async function leaveProject(userId, projectId, reason) {
       },
       data: { assigneeMemberId: null },
     });
+
+    // Cancel any pending handover requests — member is leaving so they can
+    // no longer follow through on them.
+    await cancelPendingRequestsForMember(tx, membership.id, projectId, userId);
 
     // Reopen the role if it was CLOSED
     if (membership.roleId && membership.role?.status === "CLOSED") {

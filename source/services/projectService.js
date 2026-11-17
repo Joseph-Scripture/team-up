@@ -3,6 +3,7 @@ import {
   cacheGet, cacheSet, withCache, cacheDel, cacheDelPattern,
   CacheKey, TTL,
 } from "../lib/cache.js";
+import { createNotification } from "./notificationService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -399,6 +400,9 @@ export async function publishProject(projectId, ownerId) {
     data: {
       status: "OPEN",
       publishedAt: new Date(),
+      // Publishing shares the project page — that is what makes it
+      // discoverable and joinable. The owner can unshare it later.
+      isShared: true,
     },
     include: PROJECT_INCLUDE,
   });
@@ -419,8 +423,17 @@ export async function publishProject(projectId, ownerId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a single project by ID. Returns null if not found or soft-deleted.
- * DRAFT projects are only visible to their owner.
+ * Fetch a single project by ID. Returns null if not found, soft-deleted, or
+ * not visible to the requester.
+ *
+ * Visibility rules:
+ *   - DRAFT   → visible to the owner only.
+ *   - not shared → private to the team (owner + active members).
+ *   - shared  → visible to every authenticated user.
+ *
+ * The cached payload is requester-independent; the access decision is always
+ * made on the fresh object so an unshared project can never leak through the
+ * cache.
  *
  * @param {string} projectId
  * @param {string|null} requesterId  — the authenticated user's ID (or null for public)
@@ -428,20 +441,278 @@ export async function publishProject(projectId, ownerId) {
  */
 export async function getProjectById(projectId, requesterId = null) {
   const cacheKey = CacheKey.project(projectId);
-  const cached = await cacheGet(cacheKey);
-  if (cached) return cached;
+  let project = await cacheGet(cacheKey);
 
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    include: PROJECT_INCLUDE,
-  });
+  if (!project) {
+    project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: PROJECT_INCLUDE,
+    });
+    if (!project) return null;
+    // Only published projects are cached — a DRAFT is owner-only and must
+    // never be served from a shared cache entry.
+    if (project.status !== "DRAFT") {
+      await cacheSet(cacheKey, project, TTL.PROJECT);
+    }
+  }
 
   if (!project || project.deletedAt) return null;
+
   if (project.status === "DRAFT") {
     return project.ownerId === requesterId ? project : null;
   }
 
-  await cacheSet(cacheKey, project, TTL.PROJECT);
+  // Not shared → the project page is private to the team.
+  if (!project.isShared) {
+    if (project.ownerId === requesterId) return project;
+    const isActiveMember = requesterId
+      ? await prisma.projectMember.count({
+          where: { projectId, userId: requesterId, status: "ACTIVE" },
+        }) > 0
+      : false;
+    return isActiveMember ? project : null;
+  }
+
+  return project;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// completeProject
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Tasks that are still open — a project with open work is not finished.
+const OPEN_TASK_STATUSES = ["TODO", "IN_PROGRESS", "BLOCKED", "IN_REVIEW"];
+
+/**
+ * Complete a project. Only the project owner can do this.
+ *
+ * The server validates every requirement — the owner cannot skip a check:
+ *   1. The project must be running (OPEN or IN_PROGRESS).
+ *   2. The owner must enter a final outcome.
+ *   3. The project must have at least one deliverable.
+ *   4. Every active member must have at least one CONFIRMED contribution
+ *      (the member reviews their own summary, a teammate confirms it).
+ *   5. No contribution may still be waiting for a review.
+ *   6. No task may still be open.
+ *
+ * When a check fails the error carries the failed checks so the frontend can
+ * render them as a checklist.
+ *
+ * @param {string} projectId
+ * @param {string} ownerId
+ * @param {string} outcome — the final outcome the owner writes
+ */
+export async function completeProject(projectId, ownerId, outcome) {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+    select: {
+      id: true, title: true, slug: true, status: true, ownerId: true,
+      memberships: {
+        where: { status: "ACTIVE" },
+        select: {
+          id: true, userId: true,
+          user: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+
+  if (!project) throw new ProjectError("Project not found", 404);
+
+  // Only the owner completes a project.
+  if (project.ownerId !== ownerId) {
+    throw new ProjectError("Only the project owner can complete this project", 403);
+  }
+
+  if (!["OPEN", "IN_PROGRESS"].includes(project.status)) {
+    throw new ProjectError(
+      project.status === "DRAFT"
+        ? "Publish the project before completing it"
+        : `This project is already ${project.status.toLowerCase().replace("_", " ")}`,
+      409,
+    );
+  }
+
+  const finalOutcome = (outcome ?? "").trim();
+  if (!finalOutcome) {
+    throw new ProjectError("A final outcome is required to complete the project", 400);
+  }
+
+  // ── Collect everything the checks need ───────────────────────────────────
+  const [deliverableCount, contributions, openTaskCount] = await Promise.all([
+    prisma.projectEvidence.count({ where: { projectId } }),
+    prisma.contribution.findMany({
+      where: { projectId },
+      select: {
+        id: true, status: true, title: true,
+        member: { select: { userId: true } },
+      },
+    }),
+    prisma.task.count({
+      where: { projectId, status: { in: OPEN_TASK_STATUSES } },
+    }),
+  ]);
+
+  const checks = [];
+
+  // 3. At least one deliverable.
+  if (deliverableCount === 0) {
+    checks.push({
+      code:    "NO_DELIVERABLES",
+      message: "Add at least one deliverable before completing the project.",
+    });
+  }
+
+  // 4. Every active member has a confirmed contribution.
+  const confirmedByUser = new Set(
+    contributions
+      .filter((c) => c.status === "CONFIRMED")
+      .map((c) => c.member.userId),
+  );
+  const missingConfirmation = project.memberships.filter(
+    (m) => !confirmedByUser.has(m.userId),
+  );
+  if (missingConfirmation.length > 0) {
+    checks.push({
+      code:    "UNCONFIRMED_CONTRIBUTIONS",
+      message: "Every member needs a confirmed contribution before the project can be completed.",
+      members: missingConfirmation.map((m) => ({ id: m.user.id, name: m.user.name })),
+    });
+  }
+
+  // 5. No contribution may still be waiting for a review.
+  const awaitingReview = contributions.filter((c) => c.status === "PENDING_REVIEW");
+  if (awaitingReview.length > 0) {
+    checks.push({
+      code:    "UNREVIEWED_CONTRIBUTIONS",
+      message: `${awaitingReview.length} contribution${awaitingReview.length === 1 ? " is" : "s are"} still waiting for a review.`,
+      contributions: awaitingReview.map((c) => ({ id: c.id, title: c.title })),
+    });
+  }
+
+  // 6. No open task.
+  if (openTaskCount > 0) {
+    checks.push({
+      code:    "OPEN_TASKS",
+      message: `${openTaskCount} task${openTaskCount === 1 ? " is" : "s are"} still open.`,
+      count: openTaskCount,
+    });
+  }
+
+  if (checks.length > 0) {
+    const error = new ProjectError("The project is not ready to be completed yet");
+    error.status = 409;
+    error.checks = checks;
+    throw error;
+  }
+
+  // ── Complete it ───────────────────────────────────────────────────────────
+  const now = new Date();
+
+  const completed = await prisma.$transaction(async (tx) => {
+    const updated = await tx.project.update({
+      where: { id: projectId },
+      data: {
+        status:           "COMPLETED",
+        completedAt:      now,
+        completionOutcome: finalOutcome,
+      },
+      include: PROJECT_INCLUDE,
+    });
+
+    await tx.activityLog.create({
+      data: {
+        projectId,
+        actorId:  ownerId,
+        action:   "project.completed",
+        entityType: "project",
+        entityId: projectId,
+        metadata: {
+          deliverableCount,
+          memberCount: project.memberships.length,
+          confirmedContributions: contributions.filter((c) => c.status === "CONFIRMED").length,
+        },
+      },
+    });
+
+    return updated;
+  });
+
+  // Tell the team the project is done (fire-and-forget, never fails the call).
+  await Promise.all(
+    project.memberships
+      .filter((m) => m.userId !== ownerId)
+      .map((m) =>
+        createNotification({
+          userId:     m.userId,
+          type:       "PROJECT_COMPLETED",
+          projectId,
+          entityType: "project",
+          entityId:   projectId,
+          title:      `${project.title} is complete`,
+          message:    `The project "${project.title}" was completed. Open it to see the final outcome and everyone's contributions.`,
+          data: {
+            projectId:   projectId,
+            projectSlug: project.slug,
+          },
+          dedupeKey: `project-completed:${projectId}:${m.userId}`,
+        }),
+      ),
+  );
+
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
+  return completed;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setProjectSharing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Share or unshare a project page.
+ *
+ * A shared project page is visible to every authenticated user and shows up in
+ * Discover / recommendations. An unshared project page is private to the team
+ * (owner + active members) and disappears from the public listings.
+ *
+ * Only the owner can change this.
+ *
+ * @param {string} projectId
+ * @param {string} ownerId
+ * @param {boolean} isShared
+ */
+export async function setProjectSharing(projectId, ownerId, isShared) {
+  const existing = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true, deletedAt: true },
+  });
+
+  if (!existing || existing.deletedAt) {
+    throw new ProjectError("Project not found", 404);
+  }
+  if (existing.ownerId !== ownerId) {
+    throw new ProjectError("Only the project owner can change who can see this project", 403);
+  }
+
+  const project = await prisma.project.update({
+    where: { id: projectId },
+    data:  { isShared },
+    select: { id: true, title: true, status: true, isShared: true },
+  });
+
+  // The shared flag is part of the cached project payload and of every
+  // listing, so both caches have to go.
+  await cacheDel(
+    CacheKey.project(projectId),
+    CacheKey.projectsMine(ownerId),
+  );
+  await cacheDelPattern("projects:recommended:*");
+
   return project;
 }
 
@@ -552,6 +823,9 @@ export async function searchProjects(userId, filters = {}, { page = 1, limit = 1
     status:      "OPEN",
     publishedAt: { not: null },
     deletedAt:   null,
+    // Only shared projects are discoverable — an unshared project page is
+    // private to its team.
+    isShared:    true,
     // Text search — case-insensitive match on title or description
     ...(q && {
       OR: [

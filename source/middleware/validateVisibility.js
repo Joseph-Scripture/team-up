@@ -39,6 +39,18 @@ export const updateVisibilityRules = [
     .optional()
     .isBoolean({ strict: false }).withMessage("showPreferredDuration must be true or false")
     .toBoolean(),
+
+  // Master switch — hides the whole public profile from visitors.
+  body("showProfile")
+    .optional()
+    .isBoolean({ strict: false }).withMessage("showProfile must be true or false")
+    .toBoolean(),
+
+  // Opt-out from sharing contact details (email / links / location) with teammates.
+  body("shareContactWithTeam")
+    .optional()
+    .isBoolean({ strict: false }).withMessage("shareContactWithTeam must be true or false")
+    .toBoolean(),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
