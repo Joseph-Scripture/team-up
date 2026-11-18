@@ -248,11 +248,18 @@ export async function deleteUserProfile(userId) {
       data:  { status: "WITHDRAWN" },
     });
 
-    // 5. Invalidate every outstanding auth token (password reset, email
+    // 5. Cancel pending handover requests made by this member so they don't
+    //    remain in the system after the account is deleted.
+    await tx.taskHandoverRequest.updateMany({
+      where: { requesterMemberId: { not: null }, requesterId: userId, status: "PENDING" },
+      data:  { status: "CANCELLED", decidedById: userId, decidedAt: now },
+    });
+
+    // 6. Invalidate every outstanding auth token (password reset, email
     //    verification). A link issued before the deletion must not work.
     await tx.authToken.deleteMany({ where: { userId } });
 
-    // 6. End each active membership with the same cleanup as leave/release:
+    // 7. End each active membership with the same cleanup as leave/release:
     //    unassign non-terminal tasks, then reopen a role that was full.
     const activeMemberships = await tx.projectMember.findMany({
       where: { userId, status: "ACTIVE" },
@@ -307,7 +314,7 @@ export async function deleteUserProfile(userId) {
       }
     }
 
-    // 7. Projects owned by this account must not be left ownerless.
+    // 8. Projects owned by this account must not be left ownerless.
     //    A project whose owner no longer exists can never be managed again
     //    (no one can approve join requests, publish, or close it), so
     //    ownership is handed to an active manager — or, failing that, to the

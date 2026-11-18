@@ -13,6 +13,7 @@ import prisma from "../db/client.js";
 export const DEFAULT_VISIBILITY = {
   showName:              true,
   showHeadline:          true,
+  showBio:               true,
   showSkills:            true,
   showSkillLevels:       true,
   showGoals:             true,
@@ -60,6 +61,7 @@ export function applyVisibilityFilter(user, settings) {
 
   if (v.showName)              result.name              = user.name;
   if (v.showHeadline)          result.headline          = user.headline ?? null;
+  if (v.showBio)               result.bio               = user.bio ?? null;
   if (v.showGoals)             result.goals             = user.goals    ?? null;
   if (v.showAvailability) {
     result.isAvailable             = user.isAvailable;

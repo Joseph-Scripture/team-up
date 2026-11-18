@@ -593,6 +593,162 @@ export async function listProjectInvitations(requesterId, projectId, { status, r
   };
 }
 
+/**
+ * Normalise a user's skill levels to a numeric rank (BEGINNER=1, INTERMEDIATE=2, ADVANCED=3, EXPERT=4).
+ */
+function skillLevelRank(level) {
+  const rankMap = { BEGINNER: 1, INTERMEDIATE: 2, ADVANCED: 3, EXPERT: 4 };
+  return rankMap[level] ?? 1;
+}
+
+/**
+ * Compute the skill‑match portion of the collaborator score (35 % of total).
+ * The role's required skills (RoleSkill[].required, .minLevel) are matched
+ * against the user's skill set (skills[].level).  A user must possess at least
+ * one required skill and meet its minimum level to earn points.
+ */
+function computeSkillMatch(userSkills, roleSkills) {
+  if (!userSkills || !roleSkills || roleSkills.length === 0) return 0;
+
+  const userMap = new Map(
+    userSkills.map((u) => [u.skillId, skillLevelRank(u.level)])
+  );
+
+  let matchedWeight = 0;
+  let totalWeight = 0;
+
+  for (const rs of roleSkills) {
+    const uRank = userMap.get(rs.skillId) ?? 0;
+    const minRank = rs.minLevel ? skillLevelRank(rs.minLevel) : 1;
+    const weight = rs.required ? 2 : 1; // required skills carry double weight
+
+    totalWeight += weight;
+    if (uRank >= minRank) {
+      matchedWeight += weight;
+    }
+  }
+
+  if (totalWeight === 0) return 0;
+  return Math.round((matchedWeight / totalWeight) * MAX_RAW.skillMatch);
+}
+
+/**
+ * Compute the availability portion (25 % of total).
+ * User must have `isAvailable === true` and `weeklyAvailabilityHours >=
+ * Math.floor(role.hoursPerWeek / 2)`.  Full points if hours meet or exceed the
+ * threshold, proportional score otherwise.
+ */
+function computeAvailability(user, roleHours) {
+  if (!user.isAvailable) return 0;
+  if (roleHours == null) return MAX_RAW.availability; // no hour requirement
+
+  const threshold = Math.floor(roleHours / 2);
+  if (user.weeklyAvailabilityHours == null) return 0;
+  if (user.weeklyAvailabilityHours >= roleHours) return MAX_RAW.availability;
+  if (user.weeklyAvailabilityHours >= threshold)
+    return Math.round((user.weeklyAvailabilityHours / roleHours) * MAX_RAW.availability);
+  return 0;
+}
+
+/**
+ * Compute the goals & interests portion (20 % of total).
+ * Matches user.goals against role.goal via substring, and user.projectInterests
+ * against role.topics.  Each match adds equal share; if neither field is set,
+ * a neutral 10 / 20 is returned.
+ */
+function computeGoalsInterests(user, role) {
+  let matches = 0;
+  const total = 2; // goals + topics
+
+  // Goals match
+  if (user.goals && role.goal) {
+    const gLower = user.goals.toLowerCase();
+    const rLower = role.goal.toLowerCase();
+    if (rLower.includes(gLower) || gLower.includes(rLower)) matches += 1;
+  } else if (!user.goals && !role.goal) {
+    matches += 1; // both absent → neutral match
+  }
+
+  // Interests/topics match
+  if (Array.isArray(user.projectInterests) && Array.isArray(role.topics) && role.topics.length > 0) {
+    const userSet = new Set(user.projectInterests.map((i) => i.toLowerCase()));
+    for (const t of role.topics) {
+      if (userSet.has(t.toLowerCase())) matches += 1;
+    }
+  } else if (!Array.isArray(user.projectInterests) && !Array.isArray(role.topics)) {
+    matches += 1; // both absent → neutral match
+  }
+
+  // Normalise to 0‑20 range (2 "topics" → max 20)
+  return Math.round((matches / total) * MAX_RAW.goalsInterests);
+}
+
+/**
+ * Compute the collaboration preferences portion (15 % of total).
+ * Matches the AI‑matching fields the user has set against corresponding
+ * fields on the role.  Currently mapped fields are:
+ *   • user.collaborationGoals  → role.goal
+ *   • user.projectInterests    → role.topics
+ *   • user.workMode            → role.workMode
+ *   • user.collaborationDuration — no direct role field, gives half‑point boost
+ *   • user.professionalRole    — no direct role field, gives half‑point boost
+ * Each full match earns 3 points (15 / 5), each half‑match earns 1.5 points.
+ */
+function computeCollabPrefs(user, role) {
+  let matches = 0;
+  // 1. collaborationGoals ↔ role.goal
+  if (user.collaborationGoals && role.goal) {
+    const gLower = Array.isArray(user.collaborationGoals)
+      ? user.collaborationGoals.map((g) => g.toLowerCase())
+      : [user.collaborationGoals.toLowerCase()];
+    const rLower = role.goal.toLowerCase();
+    if (gLower.some((g) => rLower.includes(g))) matches += 3;
+  } else if (!user.collaborationGoals && !role.goal) {
+    matches += 3; // both absent → neutral
+  }
+
+  // 2. projectInterests ↔ role.topics
+  if (user.projectInterests && role.topics && role.topics.length > 0) {
+    const userSet = new Set(
+      Array.isArray(user.projectInterests)
+        ? user.projectInterests.map((i) => i.toLowerCase())
+        : [user.projectInterests.toLowerCase()],
+    );
+    if (role.topics.some((t) => userSet.has(t.toLowerCase()))) matches += 3;
+  } else if (!user.projectInterests && !role.topics) {
+    matches += 3; // both absent → neutral
+  }
+
+  // 3. workMode ↔ role.workMode
+  if (user.workMode && role.workMode) {
+    matches += user.workMode === role.workMode ? 3 : 1.5;
+  } else if (!user.workMode && !role.workMode) {
+    matches += 3; // both absent → neutral
+  }
+
+  // 4. collaborationDuration and professionalRole give a small bonus
+  //    (they have no role‑side counterpart, but signal a "filled‑in" profile).
+  if (user.collaborationDuration !== undefined) matches += 1.5;
+  if (user.professionalRole) matches += 1.5;
+
+  // Cap at 15 points.
+  return Math.min(MAX_RAW.collabPrefs, matches);
+}
+
+/**
+ * Compute the experience‑level portion (5 % of total).
+ * Longer‑tenured users (older `createdAt` and already‑completed onboarding)
+ * earn more points.  We normalise against the newest and oldest accounts in
+ * the result set so the score is relative, but capped at MAX_RAW.experience.
+ */
+function computeExperience(user, usersInRange) {
+  if (!user.onboardingCompletedAt || !user.createdAt) return 0;
+  // Simple age‑based score: older accounts get more points.
+  const ageDays = (new Date() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24);
+  // 0‑5 points: <365 days, 5+ points: >365 days, cap at 5.
+  return ageDays > 365 ? MAX_RAW.experience : Math.round((ageDays / 365) * MAX_RAW.experience);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // findCollaborators  (project owner / manager view)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -609,6 +765,25 @@ const VALID_PROJECT_TYPES = [
   "DESIGN",
   "OTHER",
 ];
+
+// ── Collaborator‑matching weights (PRD Part 10) ───────────────────────────────
+// All scores are normalized to a 0‑100 scale, then clipped to the weight's slice.
+const WEIGHTS = {
+  skillMatch:    0.35,   // Complementary skills
+  availability:  0.25,   // Availability
+  goalsInterests:0.20,   // Goals and interests
+  collabPrefs:   0.15,   // Collaboration preferences
+  experience:    0.05,   // Experience level
+};
+// Max raw points before weight application (so weighted total = 100).
+const MAX_RAW = {
+  skillMatch:    35,
+  availability:  25,
+  goalsInterests:20,
+  collabPrefs:   15,
+  experience:    5,
+};
+// ---------------------------------------------------------------------------
 
 /**
  * Find eligible users that a project owner / manager can invite for a specific
@@ -672,7 +847,19 @@ export async function findCollaborators(
   // ── 2. Validate the role belongs to this project and is OPEN ─────────────
   const role = await prisma.projectRole.findFirst({
     where: { id: roleId, projectId },
-    select: { id: true, title: true, hoursPerWeek: true, status: true },
+    select: {
+      id:            true,
+      title:         true,
+      hoursPerWeek:  true,
+      status:        true,
+      skills:        {
+        include: {
+          skill: {
+            select: { id: true, name: true, slug: true, category: true },
+          },
+        },
+      },
+    },
   });
 
   if (!role) throw new InvitationError("Role not found on this project", 404);
@@ -769,18 +956,19 @@ export async function findCollaborators(
   const [users, total] = await Promise.all([
     prisma.user.findMany({
       where,
-      orderBy: [{ isAvailable: "desc" }, { createdAt: "desc" }],
       skip,
       take: safeLimit,
       select: {
-        id:                            true,
-        name:                          true,
-        headline:                      true,
-        avatarUrl:                     true,
-        location:                      true,
-        isAvailable:                   true,
-        weeklyAvailabilityHours:       true,
-        preferredProjectDurationWeeks: true,
+        id:                              true,
+        name:                            true,
+        headline:                        true,
+        avatarUrl:                       true,
+        location:                        true,
+        isAvailable:                     true,
+        weeklyAvailabilityHours:         true,
+        preferredProjectDurationWeeks:  true,
+        onboardingCompletedAt:           true,
+        createdAt:                       true,
         skills: {
           select: {
             level: true,
@@ -792,10 +980,57 @@ export async function findCollaborators(
     prisma.user.count({ where }),
   ]);
 
+  // ── 5. Compute collaborator-match scores for each user ────────────────────
+  const usersWithScores = users.map((user) => {
+    // Skill match (0‑35)
+    const skillMatch = computeSkillMatch(user.skills, role.skills);
+
+    // Availability (0‑25)
+    const availability = computeAvailability(user, role.hoursPerWeek);
+
+    // Goals & interests (0‑20)
+    const goalsInterests = computeGoalsInterests(user, role);
+
+    // Collaboration preferences (0‑15)
+    const collabPrefs = computeCollabPrefs(user, role);
+
+    // Experience level (0‑5)
+    const experience = computeExperience(user, users);
+
+    // Overall score (0‑100): sum of raw factor scores.
+    // Each raw factor maxes at MAX_RAW[factor]; they sum to 100.
+    const overallScore = skillMatch + availability + goalsInterests + collabPrefs + experience;
+
+    return {
+      ...user,
+      // Collab‑match scores (raw before weight application, for display)
+      collabMatch: {
+        skillMatch,
+        availability,
+        goalsInterests,
+        collabPrefs,
+        experience,
+        // Weighted contribution of each factor to the total (0‑100 scale)
+        weighted: {
+          skillMatch:    skillMatch * WEIGHTS.skillMatch,
+          availability:  availability * WEIGHTS.availability,
+          goalsInterests:goalsInterests * WEIGHTS.goalsInterests,
+          collabPrefs:   collabPrefs * WEIGHTS.collabPrefs,
+          experience:    experience * WEIGHTS.experience,
+          overall:       Math.round(overallScore),
+        },
+      },
+      // Sort by overall score descending — moved outside this map
+    };
+  });
+
+  // ── 6. Sort by overall score descending ─────────────────────────────────
+  usersWithScores.sort((a, b) => b.collabMatch.weighted.overall - a.collabMatch.weighted.overall);
+
   return {
     count: total,
     role:  { id: role.id, title: role.title },
-    users,
+    users: usersWithScores,
     pagination: {
       total,
       page:       safePage,
