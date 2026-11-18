@@ -15,6 +15,11 @@ export const updateVisibilityRules = [
     .isBoolean({ strict: false }).withMessage("showHeadline must be true or false")
     .toBoolean(),
 
+  body("showBio")
+    .optional()
+    .isBoolean({ strict: false }).withMessage("showBio must be true or false")
+    .toBoolean(),
+
   body("showSkills")
     .optional()
     .isBoolean({ strict: false }).withMessage("showSkills must be true or false")

@@ -795,6 +795,7 @@ export async function deleteProject(projectId, ownerId) {
  *   maxDuration   — durationWeeks <= maxDuration
  *   minHours      — weeklyHours >= minHours
  *   maxHours      — weeklyHours <= maxHours
+ *   roleTitle     — case-insensitive match on at least one role title
  *
  * Always excludes soft-deleted projects and DRAFT / completed projects.
  * Results are ordered newest-published first, then paginated.
@@ -813,6 +814,7 @@ export async function searchProjects(userId, filters = {}, { page = 1, limit = 1
     maxDuration,
     minHours,
     maxHours,
+    roleTitle,
   } = filters;
 
   const safePage  = Math.max(1, Number(page));
@@ -854,6 +856,17 @@ export async function searchProjects(userId, filters = {}, { page = 1, limit = 1
     // Skill filter — project must carry at least one of the requested skills
     ...(skillIds?.length > 0 && {
       skills: { some: { skillId: { in: skillIds } } },
+    }),
+    // Role title filter — project must have at least one role with a title containing the given string (case-insensitive)
+    ...(roleTitle && {
+      roles: {
+        some: {
+          title: {
+            contains: roleTitle,
+            mode: "insensitive",
+          },
+        },
+      },
     }),
   };
 

@@ -564,7 +564,7 @@ export async function SearchProjects(req, res) {
       q, projectType,
       minDuration, maxDuration,
       minHours, maxHours,
-      page, limit,
+      roleTitle, page, limit,
     } = req.query;
 
     // skillIds can arrive as ?skillIds[]=x&skillIds[]=y or ?skillIds=x
@@ -575,7 +575,7 @@ export async function SearchProjects(req, res) {
 
     const result = await searchProjects(
       req.user.id,
-      { q, projectType, skillIds: skillIdsArr, minDuration, maxDuration, minHours, maxHours },
+      { q, projectType, skillIds: skillIdsArr, minDuration, maxDuration, minHours, maxHours, roleTitle },
       { page, limit },
     );
 

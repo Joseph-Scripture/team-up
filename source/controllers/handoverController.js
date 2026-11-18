@@ -12,6 +12,10 @@ function handleError(res, error) {
   if (error instanceof HandoverError) {
     return res.status(error.status).json({ message: error.message });
   }
+  // Prisma P2002 = unique constraint violation (e.g. two concurrent handover requests)
+  if (error.code === "P2002") {
+    return res.status(409).json({ message: "Duplicate handover request" });
+  }
   console.error("handover operation failed:", error);
   return res.status(500).json({ message: "Internal server error" });
 }
