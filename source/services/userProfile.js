@@ -251,7 +251,7 @@ export async function deleteUserProfile(userId) {
     // 5. Cancel pending handover requests made by this member so they don't
     //    remain in the system after the account is deleted.
     await tx.taskHandoverRequest.updateMany({
-      where: { requesterMemberId: { not: null }, requesterId: userId, status: "PENDING" },
+      where: { requesterId: userId, status: "PENDING" },
       data:  { status: "CANCELLED", decidedById: userId, decidedAt: now },
     });
 
