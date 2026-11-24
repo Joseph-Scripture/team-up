@@ -119,7 +119,7 @@ export default {
 
   // Access token: short-lived JWT. Revoked by deleting/revoking its
   // Session row (authenticate.js checks the session on every request).
-  ACCESS_TOKEN_TTL: process.env.ACCESS_TOKEN_TTL ?? "15m", // jsonwebtoken format
+  ACCESS_TOKEN_TTL: process.env.ACCESS_TOKEN_TTL ?? "45m", // jsonwebtoken format
 
   // Refresh token: opaque random string, stored hashed in Session.
   // Sliding lifetime — each rotation extends it.
