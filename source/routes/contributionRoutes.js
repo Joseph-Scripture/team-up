@@ -7,6 +7,8 @@ import {
   projectIdParamRule,
   reviewContributionRules,
   submitContributionRules,
+  editContributionRules,
+  addEvidenceRules,
 } from "../middleware/validateContribution.js";
 import {
   ListContributions,
@@ -15,6 +17,8 @@ import {
   SubmitContribution,
   AcknowledgeContribution,
   ReviewContribution,
+  EditContribution,
+  AddContributionEvidence,
 } from "../controllers/contributionController.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +46,7 @@ router.get(
 
 /**
  * POST /api/projects/:projectId/contributions
- * Submit your own contribution summary (step 1 of 2).
+ * Create your ONE contribution summary for this project (409 if one exists).
  */
 router.post(
   "/",
@@ -71,6 +75,31 @@ router.get(
   contributionParamRules,
   validate,
   GetContribution,
+);
+
+/**
+ * POST /api/projects/:projectId/contributions/:contributionId/evidence
+ * Contributor adds an extra evidence link to their summary. Silent: never
+ * changes the summary status and never notifies reviewers.
+ */
+router.post(
+  "/:contributionId/evidence",
+  addEvidenceRules,
+  validate,
+  AddContributionEvidence,
+);
+
+/**
+ * PATCH /api/projects/:projectId/contributions/:contributionId
+ * Edit & resubmit after a reviewer requested changes. Only the contributor,
+ * only while the latest review decision is CHANGES_REQUESTED. Clears the
+ * acknowledgement and pings reviewers (owner + managers).
+ */
+router.patch(
+  "/:contributionId",
+  editContributionRules,
+  validate,
+  EditContribution,
 );
 
 /**

@@ -1,6 +1,7 @@
 import prisma from "../db/client.js";
 import { acceptPendingRequestsForTask } from "./handoverService.js";
 import { createNotification } from "./notificationService.js";
+import { recordTaskCompletion } from "./contributionService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -456,11 +457,13 @@ export async function updateTask(userId, projectId, taskId, fields) {
     }
   }
 
-  // ── Contribution block ────────────────────────────────────────────────────
-  // Issue 5 fix: only create a contribution on the specific update that
-  // transitions status TO COMPLETED. Subsequent updates on an already-completed
-  // task do NOT generate another contribution row.
-  let contributionData = null;
+  // ── Contribution summary entry ────────────────────────────────────────────
+  // One summary per member per project: completing a task appends a
+  // TASK_COMPLETION evidence entry to the member's summary instead of
+  // creating a separate contribution row with its own review cycle.
+  // The append is silent — the summary's status and acknowledgement are
+  // never touched (a CONFIRMED summary stays confirmed) and no reviewer
+  // notification is sent.
 
   const transitioningToCompleted = newStatus === "COMPLETED" && task.status !== "COMPLETED";
 
@@ -468,63 +471,49 @@ export async function updateTask(userId, projectId, taskId, fields) {
     throw new TaskError("A contribution can only be submitted when completing a task", 400);
   }
   if (contribution && !transitioningToCompleted) {
-    throw new TaskError("This task is already completed; create a separate resubmission flow for another contribution", 409);
+    throw new TaskError(
+      "This task is already completed; add evidence to your summary with POST /api/projects/:projectId/contributions/:contributionId/evidence instead",
+      409,
+    );
   }
 
-  if (contribution && transitioningToCompleted) {
-    const { title: cTitle, completionNote, artifactUrl, fileUrl, fileType } = contribution;
-
+  // Whose summary gets the entry: the assignee's when there is one,
+  // otherwise the caller's.
+  let completionEntry = null;
+  if (transitioningToCompleted) {
     const contributorMemberId = isAssignee
       ? memberId
       : task.assigneeMemberId ?? memberId;
 
     if (contributorMemberId) {
-      const evidenceRows = [];
-      if (artifactUrl) {
-        evidenceRows.push({ url: artifactUrl, type: "LIVE_DEMO", title: "Artifact link" });
-      }
-      if (fileUrl) {
-        evidenceRows.push({
-          url:   fileUrl,
-          type:  fileType ?? "DOCUMENT",
-          title: "Attached file",
-        });
-      }
-
-      contributionData = {
+      const { title: cTitle, completionNote, artifactUrl, fileUrl, fileType } = contribution ?? {};
+      completionEntry = {
         projectId,
-        memberId:    contributorMemberId,
+        memberId: contributorMemberId,
         taskId,
-        title:       cTitle?.trim() || task.title,
-        description: completionNote ?? null,
-        status:      "PENDING_REVIEW",
-        evidence:    evidenceRows,
+        taskTitle: task.title,
+        // Used only when this is the member's first piece of work.
+        defaultSummaryTitle: cTitle?.trim() || `Contributions to ${project.title}`,
+        completionNote:      completionNote ?? null,
+        artifactUrl:         artifactUrl ?? null,
+        fileUrl:             fileUrl ?? null,
+        fileType:            fileType ?? null,
       };
     }
   }
 
-  // Issue 2 fix: task update and contribution creation run in one transaction
-  // so a failure in either leaves the database in a consistent state.
-  const { updatedTask, createdContribution } = await prisma.$transaction(async (tx) => {
+  // Issue 2 fix: the task update and the summary append run in one
+  // transaction so a failure in either leaves the database consistent.
+  const { updatedTask, summaryEntry } = await prisma.$transaction(async (tx) => {
     const updated = await tx.task.update({
       where:  { id: taskId },
       data,
       select: TASK_SELECT,
     });
 
-    let contrib = null;
-    if (contributionData) {
-      const { evidence, ...rest } = contributionData;
-      contrib = await tx.contribution.create({
-        data: {
-          ...rest,
-          evidence: evidence.length > 0 ? { create: evidence } : undefined,
-        },
-        select: {
-          id: true, title: true, description: true, status: true,
-          evidence: { select: { id: true, url: true, type: true, title: true } },
-        },
-      });
+    let summary = null;
+    if (completionEntry) {
+      summary = await recordTaskCompletion(tx, completionEntry);
     }
 
     // Reassigning a task is the only thing that resolves a pending handover
@@ -538,7 +527,7 @@ export async function updateTask(userId, projectId, taskId, fields) {
       await acceptPendingRequestsForTask(tx, taskId, projectId, userId, newAssigneeUserId);
     }
 
-    return { updatedTask: updated, createdContribution: contrib };
+    return { updatedTask: updated, summaryEntry: summary };
   });
 
   // ── Notify new assignee if assignment changed ─────────────────────────────
@@ -590,7 +579,7 @@ export async function updateTask(userId, projectId, taskId, fields) {
     }
   }
 
-  return { task: updatedTask, contribution: createdContribution };
+  return { task: updatedTask, contribution: summaryEntry };
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -603,16 +592,12 @@ export async function deleteTask(userId, projectId, taskId) {
   const task = await prisma.task.findFirst({ where: { id: taskId, projectId } });
   if (!task) throw new TaskError("Task not found", 404);
 
-  // Contributions are portfolio records and use an ON DELETE NO ACTION foreign
-  // key. Preserve them while unlinking the deleted task in the same transaction.
-  await prisma.$transaction([
-    prisma.contribution.updateMany({
-      where: { projectId, taskId },
-      data: { taskId: null },
-    }),
-    prisma.task.delete({ where: { id: taskId } }),
-  ]);
-  return { message: "Task deleted. Linked contributions were preserved and unlinked." };
+  // Contribution evidence entries are portfolio records: the ones documenting
+  // this task keep their row — ContributionEvidence.taskId is
+  // ON DELETE SET NULL, so the task link clears automatically while the
+  // member's summary keeps its history.
+  await prisma.task.delete({ where: { id: taskId } });
+  return { message: "Task deleted. Contribution evidence entries were preserved." };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

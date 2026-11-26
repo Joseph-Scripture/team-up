@@ -127,6 +127,9 @@ enum EvidenceType {
   IMAGE
   VIDEO
   OTHER
+  // System-generated entry created when a task transitions to COMPLETED.
+  // url is null for these rows — the task itself is the proof.
+  TASK_COMPLETION
 }
 
 enum NotificationType {
@@ -147,6 +150,7 @@ enum NotificationType {
   MILESTONE_UPDATE
   TEAM_UPDATE
   CONTRIBUTION_REVIEW
+  CONTRIBUTION_SUBMITTED
   PROJECT_COMPLETED
   EVIDENCE_ADDED
 }
@@ -642,7 +646,7 @@ model Task {
   createdBy User @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
   comments              TaskComment[]
-  contributions         Contribution[]
+  contributionEvidence  ContributionEvidence[]
   dateExtensionRequests DateExtensionRequest[]
   handoverRequests      TaskHandoverRequest[]
 
@@ -695,12 +699,13 @@ model TeamUpdate {
 
 // A member's claim of work done. The contributor is derived through memberId
 // (no duplicated userId that could disagree with the member row).
-// A task may have many contributions, including resubmissions after CHANGES_REQUESTED.
+// ONE summary per member per project: completing a task appends a
+// TASK_COMPLETION evidence entry (ContributionEvidence.taskId) to the
+// member's summary instead of creating a new row with its own review cycle.
 model Contribution {
   id        String  @id @default(cuid())
   projectId String
   memberId  String
-  taskId    String?
 
   title       String  @db.VarChar(200)
   description String? @db.Text
@@ -716,7 +721,6 @@ model Contribution {
 
   project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   member  ProjectMember @relation(fields: [projectId, memberId], references: [projectId, id], onDelete: NoAction)
-  task    Task?         @relation(fields: [projectId, taskId], references: [projectId, id], onDelete: NoAction)
 
   reviews  ContributionReview[]
   evidence ContributionEvidence[]
@@ -724,9 +728,10 @@ model Contribution {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
+  // The core invariant: one summary per member per project.
+  @@unique([projectId, memberId])
   @@index([projectId, status])
   @@index([memberId, status])
-  @@index([taskId])
 }
 
 // Append-only review history. Contribution.status mirrors the latest decision.
@@ -748,18 +753,25 @@ model ContributionReview {
 }
 
 // Replaces the single Contribution.evidenceUrl string: a contribution can have several proofs.
+// Completed tasks appear here as TASK_COMPLETION entries (taskId set, url null)
+// — they are appended silently and never trigger their own review cycle.
 model ContributionEvidence {
   id             String       @id @default(cuid())
   contributionId String
+  // Set when this entry documents a completed task on the same project.
+  taskId         String?
   title          String?      @db.VarChar(150)
-  url            String       @db.VarChar(2048)
+  // Nullable: TASK_COMPLETION entries have no URL of their own.
+  url            String?      @db.VarChar(2048)
   type           EvidenceType @default(OTHER)
 
   contribution Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+  task         Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([contributionId])
+  @@index([taskId])
 }
 
 model ProjectEvidence {

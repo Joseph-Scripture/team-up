@@ -290,7 +290,7 @@ export async function getCompletedProjects(targetUserId, { page = 1, limit = PRO
             id: true, title: true, description: true,
             confirmedAt: true,
             evidence: {
-              select: { id: true, url: true, type: true, title: true },
+              select: { id: true, taskId: true, url: true, type: true, title: true },
             },
           },
         },

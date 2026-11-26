@@ -67,10 +67,43 @@ export const submitContributionRules = [
     .isString().trim()
     .isLength({ max: 5000 }).withMessage("description must be at most 5000 characters"),
 
-  body("taskId")
+  body("artifactUrl")
     .optional({ values: "null" })
-    .isString().trim().notEmpty()
-    .withMessage("taskId must be a non-empty string"),
+    .isString().trim()
+    .isURL({ require_protocol: true })
+    .withMessage("artifactUrl must be a valid URL"),
+
+  body("fileUrl")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isURL({ require_protocol: true })
+    .withMessage("fileUrl must be a valid URL"),
+
+  body("fileType")
+    .optional({ values: "null" })
+    .isString().trim().toUpperCase()
+    .isIn(VALID_EVIDENCE_TYPES)
+    .withMessage(`fileType must be one of: ${VALID_EVIDENCE_TYPES.join(", ")}`),
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/projects/:projectId/contributions/:contributionId
+// Edit & resubmit after CHANGES_REQUESTED — all fields optional; at least
+// one field should be provided (enforced by the service, not validation).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const editContributionRules = [
+  ...contributionParamRules,
+
+  body("title")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ min: 1, max: 200 }).withMessage("title must be 1 to 200 characters"),
+
+  body("description")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ max: 5000 }).withMessage("description must be at most 5000 characters"),
 
   body("artifactUrl")
     .optional({ values: "null" })
@@ -89,6 +122,33 @@ export const submitContributionRules = [
     .isString().trim().toUpperCase()
     .isIn(VALID_EVIDENCE_TYPES)
     .withMessage(`fileType must be one of: ${VALID_EVIDENCE_TYPES.join(", ")}`),
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/projects/:projectId/contributions/:contributionId/evidence
+// Manual evidence link on the member's summary. TASK_COMPLETION is
+// system-generated and deliberately not accepted here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const addEvidenceRules = [
+  ...contributionParamRules,
+
+  body("url")
+    .isString().withMessage("url is required").bail()
+    .trim()
+    .isURL({ require_protocol: true })
+    .withMessage("url must be a valid URL"),
+
+  body("title")
+    .optional({ values: "null" })
+    .isString().trim()
+    .isLength({ min: 1, max: 150 }).withMessage("title must be 1 to 150 characters"),
+
+  body("type")
+    .optional({ values: "null" })
+    .isString().trim().toUpperCase()
+    .isIn(VALID_EVIDENCE_TYPES)
+    .withMessage(`type must be one of: ${VALID_EVIDENCE_TYPES.join(", ")}`),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

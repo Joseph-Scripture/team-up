@@ -104,6 +104,7 @@ export async function GetPreferences(req, res) {
  *                         - MILESTONE_UPDATE
  *                         - TEAM_UPDATE
  *                         - CONTRIBUTION_REVIEW
+ *                         - CONTRIBUTION_SUBMITTED
  *                         - PROJECT_COMPLETED
  *                     channel:
  *                       type: string

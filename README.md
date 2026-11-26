@@ -258,9 +258,9 @@ requirement — nothing can be skipped:
 1. the project must be `OPEN` or `IN_PROGRESS`,
 2. the owner must send a final `outcome`,
 3. the project must have at least one **deliverable**,
-4. **every active member** must have at least one `CONFIRMED` contribution
+4. **every active member** must have a `CONFIRMED` contribution summary
    (the member reviews their own summary, a teammate confirms it),
-5. no contribution may still be waiting for a review,
+5. no summary may still be waiting for a review,
 6. no task may still be open.
 
 When a requirement is not met the response is `409` with a `checks` array:
@@ -291,8 +291,8 @@ invalidated.
 | GET    | `/tasks`                            | Bearer | List tasks. |
 | POST   | `/tasks`                            | Bearer | Create a task. |
 | GET    | `/tasks/:taskId`                    | Bearer | A single task. |
-| PATCH  | `/tasks/:taskId`                    | Bearer | Update a task. Setting `status: "COMPLETED"` may include a `contribution` block that creates the contribution. |
-| DELETE | `/tasks/:taskId`                    | Bearer | Delete a task (linked contributions are preserved and unlinked). |
+| PATCH  | `/tasks/:taskId`                    | Bearer | Update a task. Setting `status: "COMPLETED"` appends a `TASK_COMPLETION` evidence entry to the member's contribution summary; an optional `contribution` block adds a note/links to it. |
+| DELETE | `/tasks/:taskId`                    | Bearer | Delete a task (evidence entries documenting it are preserved; their task link is cleared). |
 | GET    | `/tasks/:taskId/comments`           | Bearer | List task comments. |
 | POST   | `/tasks/:taskId/comments`           | Bearer | Add a comment. |
 | PATCH  | `/tasks/:taskId/comments/:commentId` | Bearer | Edit a comment. |
@@ -306,30 +306,60 @@ invalidated.
 
 ### Contributions — `/api/projects/:projectId/contributions`
 
-Confirmation takes **two steps**: the member reviews their own summary first,
-then a teammate confirms it.
+**One contribution summary per member per project.** Completing a task does
+**not** create a new contribution — it appends a `TASK_COMPLETION` evidence
+entry (with `taskId` and a null `url`) inside the assignee's existing summary,
+silently: a `CONFIRMED` summary stays confirmed, a pending one stays pending,
+and no reviewer is pinged. Manual proof links go through the evidence endpoint
+below.
+
+Confirmation of the summary itself takes **two steps**: the member reviews
+their own summary first, then the owner or a manager confirms it. The project
+owner may confirm their own summary (step 2 is skipped for a self-review —
+there is no teammate to acknowledge to).
 
 | Method | Path                      | Auth   | Description |
 | ------ | ------------------------- | ------ | ----------- |
-| GET    | `/`                       | Bearer | List contributions. Query: `status`, `mine=true` (only yours), `page`, `limit`. |
-| POST   | `/`                       | Bearer | Submit **your own** contribution summary. |
-| GET    | `/summary`                | Bearer | Confirmed contributions only — used for the project-page summary. |
-| GET    | `/:contributionId`        | Bearer | A single contribution with its full review history. |
+| GET    | `/`                       | Bearer | List summaries. Query: `status`, `mine=true` (only yours), `page`, `limit`. |
+| POST   | `/`                       | Bearer | Create **your** summary (`409` if you already have one). |
+| GET    | `/summary`                | Bearer | Confirmed summaries only — used for the project-page summary. |
+| GET    | `/:contributionId`        | Bearer | A single summary with its full review history and evidence. |
+| POST   | `/:contributionId/evidence` | Bearer | Attach an extra evidence link (contributor only, silent). |
+| PATCH  | `/:contributionId`        | Bearer | **Edit & resubmit** after changes were requested (contributor only). |
 | POST   | `/:contributionId/acknowledge` | Bearer | Review and acknowledge **your own** summary (step 2). |
 | POST   | `/:contributionId/review` | Bearer | Confirm or request changes (step 3). |
 
 Rules:
 
-- A contribution starts as `PENDING_REVIEW` with `memberAcknowledgedAt: null`.
+- **One summary per member per project** — `POST /` returns `409` when one
+  already exists; further work is recorded as evidence on that summary.
+- **Completed tasks become evidence**: each transition to `COMPLETED` appends
+  one `TASK_COMPLETION` entry (idempotent per task — reopening and
+  re-completing never duplicates it). Extra `artifactUrl`/`fileUrl` links sent
+  with the completion are appended too, and a `completionNote` rides along on
+  the summary description.
+- Evidence links added via `POST /:contributionId/evidence` are **silent** —
+  they never change the summary status or trigger a notification.
+- A summary starts as `PENDING_REVIEW` with `memberAcknowledgedAt: null`.
 - Only the contributor can acknowledge their own summary (`403` otherwise);
   acknowledging twice is harmless.
-- `CONFIRMED` is rejected with `409` while the summary is not acknowledged.
+- `CONFIRMED` is rejected with `409` while the summary is not acknowledged —
+  except when the **owner confirms their own summary**, where the
+  acknowledgement step is skipped.
 - Only the **owner or a manager** can confirm (`403` for a plain member).
-- No self-review (`403`) — the one exception is a project with a single active
-  member, where the owner may confirm their own summary.
-- `CHANGES_REQUESTED` puts the contribution back into `PENDING_REVIEW` and
-  clears the acknowledgement, so the contributor reviews the revised summary
-  again. The decision stays in the append-only review history.
+- No self-review (`403`) — the one exception is the **project owner**, who may
+  always confirm their own summary (managers and members never can).
+- `CHANGES_REQUESTED` puts the summary back into `PENDING_REVIEW` and
+  clears the acknowledgement. The contributor then **edits and resubmits** with
+  `PATCH /:contributionId` — only allowed while the latest review decision is
+  `CHANGES_REQUESTED` (`409` otherwise). The PATCH clears the acknowledgement
+  again and rebuilds manual evidence only when `artifactUrl`/`fileUrl` is sent
+  (`TASK_COMPLETION` entries are always preserved). The decision stays in the
+  append-only review history.
+- **"Please-review" notifications** (in-app only): the project owner and all
+  managers are pinged with `CONTRIBUTION_SUBMITTED` when a summary is
+  submitted, resubmitted, or re-acknowledged after changes were requested.
+  The contributor never gets their own ping.
 
 ### Deliverables — `/api/projects/:projectId/evidence`
 
