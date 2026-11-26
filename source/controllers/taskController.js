@@ -256,9 +256,14 @@ export async function GetTask(req, res) {
  *               sortOrder:        { type: integer, minimum: 0 }
  *               contribution:
  *                 type: object
- *                 description: "Content card — only processed when status = COMPLETED"
+ *                 description: >
+ *                   Optional extras appended to the member's contribution
+ *                   summary — only processed on the transition to COMPLETED.
+ *                   Completing a task always records a TASK_COMPLETION entry
+ *                   on the assignee's summary (one summary per member per
+ *                   project); this block just adds a note and links to it.
  *                 properties:
- *                   title:          { type: string, maxLength: 200 }
+ *                   title:          { type: string, maxLength: 200, description: "Summary title — used only when the summary is created" }
  *                   completionNote: { type: string, maxLength: 2000 }
  *                   artifactUrl:    { type: string, format: uri, description: "Link to Figma, GitHub, live demo, etc." }
  *                   fileUrl:        { type: string, format: uri, description: "Cloudinary fileUrl returned by POST /api/uploads?context=contribution" }
@@ -267,14 +272,14 @@ export async function GetTask(req, res) {
  *                     enum: [REPOSITORY, LIVE_DEMO, DOCUMENT, IMAGE, VIDEO, OTHER]
  *     responses:
  *       200:
- *         description: Updated task and optional contribution
+ *         description: Updated task and, on completion, the member's contribution summary
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 task:         { type: object }
- *                 contribution: { type: object, nullable: true }
+ *                 contribution: { type: object, nullable: true, description: "The member's summary (returned when the task transitioned to COMPLETED)" }
  *       400: { description: Validation error or missing blockerNote }
  *       403: { description: Not assignee or owner/manager }
  *       404: { description: Task not found }
