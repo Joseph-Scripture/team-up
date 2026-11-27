@@ -6,13 +6,13 @@ import {
   deleteMilestone,
   MilestoneError,
 } from "../services/milestoneService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof MilestoneError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("milestone operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "milestone operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

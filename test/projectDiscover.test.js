@@ -1,5 +1,10 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+
+// invitationService now reaches lib/cache → lib/redis, which opens a real
+// Redis connection on import and keeps the test process alive forever.
+// Redis is stubbed out before the dynamic import below runs.
+mock.module("../source/lib/redis.js", { exports: { default: null } });
 
 // -----------------------------------------------------
 // 1. RoleTitle filter for GET /api/projects
@@ -97,49 +102,45 @@ test("maxed raw scores sum to 100", () => {
   assert.strictEqual(overallScore, 100, `Maxed overall score = ${overallScore}, expected 100`);
 });
 
-test("WEIGHTS and MAX_RAW constants in invitationService have correct PRD values", () => {
-  import("../source/services/invitationService.js").then((mod) => {
-    // The service should define WEIGHTS and MAX_RAW matching the PRD.
-    // Per the implementation, MAX_RAW[i] = the i-th PRD weight point value,
-    // and the overall score is skillMatch + availability + goalsInterests + collabPrefs + experience.
-    const expectedMaxRaw = {
-      skillMatch:    35,
-      availability:  25,
-      goalsInterests:20,
-      collabPrefs:   15,
-      experience:    5,
-    };
-
-    const actualMaxRaw = mod.MAX_RAW;
-    Object.keys(expectedMaxRaw).forEach((key) => {
-      assert.strictEqual(
-        actualMaxRaw[key],
-        expectedMaxRaw[key],
-        `MAX_RAW.${key} should be ${expectedMaxRaw[key]}`,
-      );
-    });
-
-    // WEIGHTS in the service should mirror MAX_RAW (they represent the same
-    // point allocations for documentation/matching purposes).
-    const expectedWeights = {
-      skillMatch:    35,
-      availability:  25,
-      goalsInterests:20,
-      collabPrefs:   15,
-      experience:    5,
-    };
-    const actualWeights = mod.WEIGHTS;
-    Object.keys(expectedWeights).forEach((key) => {
-      assert.strictEqual(
-        actualWeights[key],
-        expectedWeights[key],
-        `WEIGHTS.${key} should be ${expectedWeights[key]}`,
-      );
-    });
-  }).catch((err) => {
+test("WEIGHTS and MAX_RAW constants in invitationService have correct PRD values", async () => {
+  // Awaited so the assertions below actually run — a floating .then() left
+  // this test green even when the import failed.
+  let mod;
+  try {
+    mod = await import("../source/services/invitationService.js");
+  } catch (err) {
     // If import fails (e.g., ESM issues in test runner), skip gracefully.
     assert.ok(true, `Import note: ${err.message}`);
-  });
+    return;
+  }
+
+  // MAX_RAW holds the PRD Part 10 point values; WEIGHTS holds the same
+  // proportions as fractions — a raw score × its weight gives the slice of the
+  // 100-point total.
+  const prdPoints = {
+    skillMatch:    35,
+    availability:  25,
+    goalsInterests:20,
+    collabPrefs:   15,
+    experience:    5,
+  };
+  assert.deepEqual(mod.MAX_RAW, prdPoints, "MAX_RAW matches the PRD Part 10 weights");
+  assert.equal(
+    Object.values(mod.MAX_RAW).reduce((a, b) => a + b, 0),
+    100,
+    "MAX_RAW points sum to 100",
+  );
+
+  const expectedFractions = {
+    skillMatch:    0.35,
+    availability:  0.25,
+    goalsInterests:0.20,
+    collabPrefs:   0.15,
+    experience:    0.05,
+  };
+  assert.deepEqual(mod.WEIGHTS, expectedFractions, "WEIGHTS are the PRD proportions as fractions");
+  const weightSum = Object.values(mod.WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(weightSum - 1) < 1e-9, `WEIGHTS sum to 1, got ${weightSum}`);
 });
 
 // -----------------------------------------------------

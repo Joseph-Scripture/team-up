@@ -1,6 +1,6 @@
 import prisma from "../db/client.js";
 import {
-  cacheGet, cacheSet, withCache, cacheDel, cacheDelPattern,
+  cacheGet, cacheSet, withCache, cacheDel, cacheDelPattern, cacheEnabled,
   CacheKey, TTL,
 } from "../lib/cache.js";
 import { createNotification } from "./notificationService.js";
@@ -65,6 +65,41 @@ export class ProjectError extends Error {
     super(message);
     this.name = "ProjectError";
     this.status = status;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// My Projects cache invalidation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Drop the cached `GET /api/projects/mine` payload of a project's owner and
+ * of every member on its team.
+ *
+ * The list returns owned *and* joined projects, so a change to one project
+ * (status, sharing, milestones, soft delete) shows up in several users' lists,
+ * not only the owner's. Swallowed like every other cache helper: a failed
+ * invalidation must never break the call that triggered it.
+ *
+ * @param {string} projectId
+ */
+export async function invalidateProjectsMine(projectId) {
+  if (!cacheEnabled()) return;
+
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        ownerId: true,
+        memberships: { select: { userId: true } },
+      },
+    });
+    if (!project) return;
+
+    const userIds = new Set([project.ownerId, ...project.memberships.map((m) => m.userId)]);
+    await cacheDel(...[...userIds].map((userId) => CacheKey.projectsMine(userId)));
+  } catch (error) {
+    console.error(`[cache] projects:mine invalidation failed for ${projectId}:`, error.message);
   }
 }
 
@@ -174,8 +209,9 @@ export async function createDraft(ownerId, data) {
     },
   });
 
-  // Invalidate owner's project list — a new project appeared
-  await cacheDel(CacheKey.projectsMine(ownerId));
+  // Invalidate the My Projects list of the owner (and of every member, so a
+  // newly joined project shows up on their screen too)
+  await invalidateProjectsMine(project.id);
 
   return project;
 }
@@ -325,11 +361,9 @@ export async function updateDraft(projectId, ownerId, data) {
     });
   });
 
-  // Invalidate project detail and owner's list
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(ownerId),
-  );
+  // Invalidate project detail and every team member's My Projects list
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
 
   return project;
 }
@@ -407,12 +441,11 @@ export async function publishProject(projectId, ownerId) {
     include: PROJECT_INCLUDE,
   });
 
-  // Publishing changes status — invalidate project detail, owner list,
-  // and all recommendation caches (new OPEN project may appear for others)
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(ownerId),
-  );
+  // Publishing changes status — invalidate project detail, every team
+  // member's My Projects list, and all recommendation caches (a new OPEN
+  // project may appear for others)
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
   await cacheDelPattern("projects:recommended:*");
 
   return project;
@@ -660,10 +693,8 @@ export async function completeProject(projectId, ownerId, outcome) {
       ),
   );
 
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(ownerId),
-  );
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
   await cacheDelPattern("projects:recommended:*");
 
   return completed;
@@ -707,37 +738,61 @@ export async function setProjectSharing(projectId, ownerId, isShared) {
 
   // The shared flag is part of the cached project payload and of every
   // listing, so both caches have to go.
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(ownerId),
-  );
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
   await cacheDelPattern("projects:recommended:*");
 
   return project;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getProjectsByOwner
+// getProjectsForUser
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Returns all non-deleted projects owned by a user, newest first.
- * Includes both drafts and published projects so the owner can see
- * everything in their dashboard.
+ * Returns every non-deleted project the user is on, newest first:
+ *   - the projects they own (DRAFTs included, so drafts stay visible), and
+ *   - the projects they joined as an ACTIVE member (any status — a completed
+ *     project still belongs on the list).
  *
- * @param {string} ownerId
+ * Each row carries `myMembership`: the caller's own membership row for that
+ * project (`null` when no row exists, e.g. a legacy owner). The client uses it
+ * to tell owned projects from joined ones.
+ *
+ * @param {string} userId
  * @returns {object[]}
  */
-export async function getProjectsByOwner(ownerId) {
-  return withCache(CacheKey.projectsMine(ownerId), () =>
-    prisma.project.findMany({
+export async function getProjectsForUser(userId) {
+  return withCache(CacheKey.projectsMine(userId), async () => {
+    const projects = await prisma.project.findMany({
       where: {
-        ownerId,
         deletedAt: null,
+        OR: [
+          { ownerId: userId },
+          { memberships: { some: { userId, status: "ACTIVE" } } },
+        ],
       },
-      include: PROJECT_INCLUDE,
+      include: {
+        ...PROJECT_INCLUDE,
+        memberships: {
+          where: { userId },
+          select: {
+            id: true, accessRole: true, status: true, roleId: true,
+            joinedAt: true, endedAt: true, endReason: true,
+            committedHoursPerWeek: true, awayUntil: true,
+          },
+        },
+      },
       orderBy: { createdAt: "desc" },
-    }), TTL.PROJECTS_MINE);
+    });
+
+    // Rename the filtered membership include so the payload never exposes a
+    // `memberships` array that only holds the caller's own row.
+    return projects.map(({ memberships, ...project }) => ({
+      ...project,
+      myMembership: memberships[0] ?? null,
+    }));
+  }, TTL.PROJECTS_MINE);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -769,10 +824,8 @@ export async function deleteProject(projectId, ownerId) {
     select: { id: true, title: true, deletedAt: true },
   });
 
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(ownerId),
-  );
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
   await cacheDelPattern("projects:recommended:*");
 
   return project;

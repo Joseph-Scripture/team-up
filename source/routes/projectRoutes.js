@@ -36,7 +36,13 @@ router.use(authenticate);
  * /api/projects/mine:
  *   get:
  *     tags: [Projects]
- *     summary: List the authenticated user's projects (drafts + published)
+ *     summary: List the authenticated user's projects (owned + joined)
+ *     description: >
+ *       Returns every non-deleted project the authenticated user is on: the
+ *       ones they own (DRAFTs included) and the ones they joined as an ACTIVE
+ *       member — any status, so finished projects are listed too. Each project
+ *       carries `myMembership`, the caller's own membership row, so the client
+ *       can tell owned projects from joined ones.
  *     security:
  *       - bearerAuth: []
  *     responses:

@@ -6,13 +6,13 @@ import {
   leaveProject,
   MemberError,
 } from "../services/memberService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof MemberError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("member operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "member operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

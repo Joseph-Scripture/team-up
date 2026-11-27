@@ -4,17 +4,18 @@ import {
   updateDraft,
   publishProject,
   getProjectById,
-  getProjectsByOwner,
   deleteProject,
   searchProjects,
   setProjectSharing,
   completeProject,
+  getProjectsForUser,
   ProjectError,
 } from "../services/projectService.js";
 import {
   getProjectTeamHealth,
   getTeamHealthForProjects,
 } from "../services/teamHealthService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -28,8 +29,7 @@ function handleError(res, error) {
   if (error.code === "P2002") {
     return res.status(409).json({ message: "A project with that title already exists. Try a different name." });
   }
-  console.error("project operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "project operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ export async function PublishProject(req, res) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/projects/mine
-// Returns all projects (drafts + published) owned by the authenticated user.
+// Returns the projects the authenticated user owns plus the ones they joined.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -190,8 +190,13 @@ export async function PublishProject(req, res) {
  *     tags: [Projects]
  *     summary: List the authenticated user's projects
  *     description: >
- *       Returns all non-deleted projects owned by the authenticated user,
- *       including DRAFT projects. Ordered newest first.
+ *       Returns every non-deleted project the authenticated user is on:
+ *       the ones they own (including DRAFT projects) and the ones they joined
+ *       as an ACTIVE member (any status, so finished projects are included).
+ *       Ordered newest first. Each project carries `myMembership` — the
+ *       caller's own membership row for that project, or null — so the client
+ *       can tell owned projects from joined ones (ownership is also visible
+ *       on `owner.id`).
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -208,7 +213,7 @@ export async function PublishProject(req, res) {
  */
 export async function GetMyProjects(req, res) {
   try {
-    const projects = await getProjectsByOwner(req.user.id);
+    const projects = await getProjectsForUser(req.user.id);
 
     // One team-health status per project, shown on My Projects.
     const healthMap = await getTeamHealthForProjects(projects);

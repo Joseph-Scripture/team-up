@@ -8,6 +8,7 @@ import {
   findCollaborators,
   InvitationError,
 } from "../services/invitationService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler — maps InvitationError to the right HTTP status and
@@ -25,8 +26,7 @@ function handleError(res, error) {
       message: "A pending invitation already exists for this user on this project.",
     });
   }
-  console.error("invitation operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "invitation operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

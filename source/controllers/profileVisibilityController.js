@@ -6,13 +6,13 @@ import {
   getCompletedProjects,
   VisibilityError,
 } from "../services/profileVisibilityService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof VisibilityError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("profile visibility operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "profile visibility operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

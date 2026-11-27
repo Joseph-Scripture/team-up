@@ -1,6 +1,7 @@
 import { matchedData } from "express-validator";
 import * as profileService from "../services/userProfile.js";
 import { clearRefreshCookie } from "../services/sessionService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error, label) {
   if (error instanceof profileService.HttpError) {
@@ -9,8 +10,7 @@ function handleError(res, error, label) {
   if (error.code === "P2025") {
     return res.status(404).json({ message: "User not found" });
   }
-  console.error(`${label} failed:`, error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, `${label} failed`);
 }
 
 export async function getMe(req, res) {

@@ -10,6 +10,7 @@ import {
   listMyJoinRequests,
   JoinRequestError,
 } from "../services/joinRequestService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -26,8 +27,7 @@ function handleError(res, error) {
       message: "You already have a pending join request for this project.",
     });
   }
-  console.error("join request operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "join request operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

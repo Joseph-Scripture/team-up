@@ -230,7 +230,7 @@ member who set `shareContactWithTeam: false` is never exposed.
 | ------ | -------------------------------------- | ------ | ----------- |
 | GET    | `/`                                    | Bearer | Browse / search published projects. |
 | POST   | `/`                                    | Bearer | Create a project draft. |
-| GET    | `/mine`                                | Bearer | The current user's drafts + published projects. |
+| GET    | `/mine`                                | Bearer | The current user's projects: owned drafts + published projects **and** the projects they joined as an active member (any status, including `COMPLETED`). Each row carries `myMembership` — the caller's own membership row for that project, or `null` when they have none (owners created through the API do have one with `accessRole: OWNER`; use `owner.id` to detect ownership). |
 | GET    | `/recommended`                         | Bearer | Ranked project recommendations. |
 | GET    | `/:id`                                 | Bearer | A single project (carries `teamHealth` for team members). |
 | PUT    | `/:id`                                 | Bearer | Update a draft. |
@@ -290,7 +290,7 @@ invalidated.
 | DELETE | `/milestones/:milestoneId`          | Bearer | Delete a milestone. |
 | GET    | `/tasks`                            | Bearer | List tasks. |
 | POST   | `/tasks`                            | Bearer | Create a task. |
-| GET    | `/tasks/:taskId`                    | Bearer | A single task. |
+| GET    | `/tasks/:taskId`                    | Bearer | A single task. Includes `milestone`, `assignee`, `createdBy` and `contributions[]` — the contribution summaries this task contributed to, each with the `evidence[]` rows recorded for this task. |
 | PATCH  | `/tasks/:taskId`                    | Bearer | Update a task. Setting `status: "COMPLETED"` appends a `TASK_COMPLETION` evidence entry to the member's contribution summary; an optional `contribution` block adds a note/links to it. |
 | DELETE | `/tasks/:taskId`                    | Bearer | Delete a task (evidence entries documenting it are preserved; their task link is cleared). |
 | GET    | `/tasks/:taskId/comments`           | Bearer | List task comments. |

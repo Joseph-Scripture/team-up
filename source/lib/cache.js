@@ -52,6 +52,15 @@ export const CacheKey = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * True when a Redis client is configured. Callers that need an extra DB query
+ * to work out *which* keys to drop use this to skip the work entirely when
+ * there is no cache to invalidate.
+ */
+export function cacheEnabled() {
+  return redis !== null;
+}
+
+/**
  * Get a cached value. Returns the parsed object or null on miss / error.
  */
 export async function cacheGet(key) {

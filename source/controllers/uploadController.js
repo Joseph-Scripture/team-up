@@ -1,4 +1,5 @@
 import { uploadToCloudinary, UploadError } from "../services/uploadService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof UploadError) {
@@ -6,8 +7,7 @@ function handleError(res, error) {
     log("[upload] UploadError:", error.status, error.message);
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("[upload] Unexpected error:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "[upload] Unexpected error");
 }
 
 /**

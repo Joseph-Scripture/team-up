@@ -1,4 +1,5 @@
 import prisma from "../db/client.js";
+import { withDbRetry } from "../lib/dbErrors.js";
 import { acceptPendingRequestsForTask } from "./handoverService.js";
 import { createNotification } from "./notificationService.js";
 import { recordTaskCompletion } from "./contributionService.js";
@@ -211,6 +212,10 @@ export async function createTask(userId, projectId, {
  * List tasks for a project with optional filters.
  * Returns summary stats (total, done, notDone, overdue) for the progress bar.
  *
+ * Read-only, so the whole thing runs under withDbRetry: the remote database
+ * link occasionally resets mid-handshake (ECONNRESET), and re-running these
+ * SELECTs is harmless.
+ *
  * @param {string} userId
  * @param {string} projectId
  * @param {object} filters
@@ -221,7 +226,11 @@ export async function createTask(userId, projectId, {
  * @param {number}  [filters.page=1]
  * @param {number}  [filters.limit=50]
  */
-export async function listTasks(userId, projectId, {
+export async function listTasks(userId, projectId, filters) {
+  return withDbRetry(() => listTasksOnce(userId, projectId, filters));
+}
+
+async function listTasksOnce(userId, projectId, {
   status,
   milestoneId,
   assigneeMemberId,
@@ -306,13 +315,16 @@ export async function getTask(userId, projectId, taskId) {
     where: { id: taskId, projectId },
     select: {
       ...TASK_SELECT,
-      contributions: {
+      // A task no longer has a `contributions` relation — a completed task is
+      // recorded as a TASK_COMPLETION entry on the member's summary
+      // (ContributionEvidence.taskId, see recordTaskCompletion). Fetch those
+      // rows and rebuild the documented `contributions` payload below.
+      contributionEvidence: {
         orderBy: { createdAt: "desc" },
         select: {
-          id: true, title: true, description: true,
-          status: true, submittedAt: true,
-          evidence: {
-            select: { id: true, url: true, type: true, title: true },
+          id: true, title: true, url: true, type: true,
+          contribution: {
+            select: { id: true, title: true, status: true, submittedAt: true },
           },
         },
       },
@@ -320,7 +332,30 @@ export async function getTask(userId, projectId, taskId) {
   });
 
   if (!task) throw new TaskError("Task not found", 404);
-  return task;
+
+  const { contributionEvidence, ...rest } = task;
+
+  // One entry per contribution summary, each carrying only the evidence that
+  // belongs to this task.
+  const byContribution = new Map();
+  for (const evidence of contributionEvidence) {
+    const summary = evidence.contribution;
+    if (!summary) continue; // defensive: an orphaned evidence row
+
+    let entry = byContribution.get(summary.id);
+    if (!entry) {
+      entry = { ...summary, evidence: [] };
+      byContribution.set(summary.id, entry);
+    }
+    entry.evidence.push({
+      id:    evidence.id,
+      title: evidence.title,
+      url:   evidence.url,
+      type:  evidence.type,
+    });
+  }
+
+  return { ...rest, contributions: [...byContribution.values()] };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

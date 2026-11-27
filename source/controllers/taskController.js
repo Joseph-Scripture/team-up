@@ -16,6 +16,7 @@ import {
   listTeamUpdates,
   TeamUpdateError,
 } from "../services/teamUpdateService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -25,8 +26,7 @@ function handleError(res, error) {
   if (error instanceof TaskError || error instanceof TeamUpdateError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("task operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "task operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
