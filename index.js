@@ -15,6 +15,8 @@ import notificationRoutes from "./source/routes/notificationRoutes.js";
 import uploadRoutes       from "./source/routes/uploadRoutes.js";
 import { apiLimiter }      from "./source/middleware/ratelimiter.js";
 import { startDeadlineNotifier } from "./source/jobs/deadlineNotifier.js";
+import { isDbConnectionError, sendDbUnavailable } from "./source/lib/dbErrors.js";
+import { warmUpPool } from "./source/db/client.js";
 
 const app = express();
 
@@ -190,6 +192,12 @@ app.use((err, req, res, next) => {
   const status = err?.status ?? err?.statusCode ?? 500;
 
   if (status >= 500) {
+    // A database blip is transient, not an API bug: answer 503 + Retry-After
+    // so the client knows retrying can succeed, instead of a bare 500.
+    if (isDbConnectionError(err)) {
+      console.error("Unhandled request error (database unavailable):", err);
+      return sendDbUnavailable(res);
+    }
     console.error("Unhandled request error:", err);
   }
 
@@ -202,6 +210,17 @@ app.use((err, req, res, next) => {
 app.listen(config.PORT, () => {
 
   console.log(`Server is running on port ${config.PORT}`);
+
+  // Pre-open a pooled connection so the first user request doesn't pay the
+  // multi-second TLS handshake to the remote database, and so a dead link is
+  // reported at boot. Non-blocking and never throws: if the database is down
+  // the API still serves /health and answers 503 until it recovers.
+  warmUpPool()
+    .then((ok) => {
+      if (ok) console.log("DB pool warm");
+      else console.warn("DB pool warm-up skipped: database unreachable");
+    })
+    .catch((err) => console.warn("DB pool warm-up error:", err.message));
 
   // Deadline reminders (08:00 UTC) and overdue alerts (09:00 UTC). These are
   // what power the overdue prompt the team sees — without them no overdue

@@ -1,4 +1,5 @@
 import prisma from "../db/client.js";
+import { cacheDel, CacheKey } from "../lib/cache.js";
 import {
   notifyInvitationSent,
   notifyInvitationResponded,
@@ -361,6 +362,9 @@ export async function acceptInvitation(userId, invitationId) {
     inviteeName:  invitation.invitee.name,
     membershipId: membership.id,
   });
+
+  // The new member's My Projects list must show the project immediately.
+  await cacheDel(CacheKey.projectsMine(userId));
 
   return {
     message:    "Invitation accepted. You are now a member of the project.",
@@ -768,7 +772,9 @@ const VALID_PROJECT_TYPES = [
 
 // ── Collaborator‑matching weights (PRD Part 10) ───────────────────────────────
 // All scores are normalized to a 0‑100 scale, then clipped to the weight's slice.
-const WEIGHTS = {
+// Exported so the PRD contract (points sum to 100, fractions sum to 1) can be
+// checked by test/projectDiscover.test.js.
+export const WEIGHTS = {
   skillMatch:    0.35,   // Complementary skills
   availability:  0.25,   // Availability
   goalsInterests:0.20,   // Goals and interests
@@ -776,7 +782,7 @@ const WEIGHTS = {
   experience:    0.05,   // Experience level
 };
 // Max raw points before weight application (so weighted total = 100).
-const MAX_RAW = {
+export const MAX_RAW = {
   skillMatch:    35,
   availability:  25,
   goalsInterests:20,

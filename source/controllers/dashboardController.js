@@ -3,6 +3,7 @@ import {
   getRecommendedProjects,
   DashboardError,
 } from "../services/dashboardService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler — mirrors the pattern used in projectController.js
@@ -12,8 +13,7 @@ function handleError(res, error) {
   if (error instanceof DashboardError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("dashboard operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "dashboard operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

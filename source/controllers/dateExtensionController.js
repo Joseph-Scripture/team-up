@@ -7,6 +7,7 @@ import {
   updateDateExtensionRequest,
   DateExtensionError,
 } from "../services/dateExtensionService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -22,8 +23,7 @@ function handleError(res, error) {
       message: "You already have a pending date extension request for this deadline.",
     });
   }
-  console.error("date extension operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "date extension operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

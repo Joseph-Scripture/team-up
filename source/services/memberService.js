@@ -2,6 +2,7 @@ import prisma from "../db/client.js";
 import { createNotification } from "./notificationService.js";
 import { resolveVisibility } from "./profileVisibilityService.js";
 import { cancelPendingRequestsForMember } from "./handoverService.js";
+import { invalidateProjectsMine } from "./projectService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom error
@@ -242,6 +243,10 @@ export async function releaseMember(requesterId, projectId, memberId, endReason)
     dedupeKey: `member-released:${memberId}`,
   });
 
+  // A released member's My Projects list must drop the project right away
+  // (and the team's lists pick up the reopened role).
+  await invalidateProjectsMine(projectId);
+
   return {
     message:  `${membership.user.name} has been released from the project.`,
     memberId,
@@ -346,6 +351,10 @@ export async function leaveProject(userId, projectId, reason) {
     data: { projectId, roleTitle: membership.role?.title },
     dedupeKey: `member-left:${membership.id}`,
   });
+
+  // The leaver's My Projects list must drop the project right away (and the
+  // team's lists pick up the reopened role).
+  await invalidateProjectsMine(projectId);
 
   return {
     message:      `You have successfully left ${project.title}.`,

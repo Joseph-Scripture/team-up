@@ -15,6 +15,7 @@ import {
   SessionError,
   REFRESH_COOKIE_NAME,
 } from "../services/sessionService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 export function Signup(req, res) {
     return signup(req, res);
@@ -28,8 +29,7 @@ function handleSessionError(res, error) {
   if (error instanceof SessionError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("auth/session operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "auth/session operation failed");
 }
 
 /**
@@ -117,7 +117,6 @@ export async function ResetPassword(req, res) {
     if (error instanceof PasswordResetError) {
       return res.status(error.status).json({ message: error.message });
     }
-    console.error("password reset failed:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return sendServerError(res, error, "password reset failed");
   }
 }

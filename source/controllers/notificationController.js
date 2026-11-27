@@ -5,6 +5,7 @@ import {
   markAllAsRead,
   NotificationError,
 } from "../services/notificationQueryService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared error handler
@@ -14,8 +15,7 @@ function handleError(res, error) {
   if (error instanceof NotificationError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("notification operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "notification operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

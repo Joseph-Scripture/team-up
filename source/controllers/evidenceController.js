@@ -6,13 +6,13 @@ import {
   deleteEvidence,
   EvidenceError,
 } from "../services/evidenceService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof EvidenceError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("evidence operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "evidence operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

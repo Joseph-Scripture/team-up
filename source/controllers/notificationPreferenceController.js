@@ -4,13 +4,13 @@ import {
   updatePreferences,
   PreferenceError,
 } from "../services/notificationPreferenceService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof PreferenceError) {
     return res.status(error.status).json({ message: error.message });
   }
-  console.error("notification preference operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "notification preference operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

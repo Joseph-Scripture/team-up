@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import prisma from "../db/client.js";
 import { issueTokenPair, setRefreshCookie } from "./sessionService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 const SALT_ROUNDS = 12;
 // Used so an unknown email takes as long as a wrong password.
@@ -28,8 +29,7 @@ export async function signup(req, res) {
     if (error.code === "P2002") {
       return res.status(409).json({ message: "User already exists" });
     }
-    console.error("signup failed:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return sendServerError(res, error, "signup failed");
   }
 }
 
@@ -60,7 +60,6 @@ export async function login(req, res) {
     setRefreshCookie(res, refreshToken);
     return res.status(200).json({ message: "Login successful", token: accessToken, user: safeUser });
   } catch (error) {
-    console.error("login failed:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return sendServerError(res, error, "login failed");
   }
 }

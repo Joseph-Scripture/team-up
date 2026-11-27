@@ -1,5 +1,6 @@
 import prisma from "../db/client.js";
 import { cacheDel, CacheKey } from "../lib/cache.js";
+import { invalidateProjectsMine } from "./projectService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom error
@@ -85,10 +86,8 @@ export async function createMilestone(userId, projectId, { title, description, d
     },
   });
 
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(project.ownerId),
-  );
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
   return milestone;
 }
 
@@ -149,10 +148,8 @@ export async function updateMilestone(userId, projectId, milestoneId, fields) {
     },
   });
 
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(project.ownerId),
-  );
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
   return updated;
 }
 
@@ -182,10 +179,8 @@ export async function deleteMilestone(userId, projectId, milestoneId) {
     prisma.milestone.delete({ where: { id: milestoneId } }),
   ]);
 
-  await cacheDel(
-    CacheKey.project(projectId),
-    CacheKey.projectsMine(project.ownerId),
-  );
+  await cacheDel(CacheKey.project(projectId));
+  await invalidateProjectsMine(projectId);
 
   return { message: "Milestone deleted. Linked tasks have been unlinked." };
 }

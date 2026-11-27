@@ -1,5 +1,6 @@
 import { matchedData } from "express-validator";
 import * as skillService from "../services/skills.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 export async function getSkills(req, res) {
   try {
@@ -11,8 +12,7 @@ export async function getSkills(req, res) {
     res.set("Cache-Control", "public, max-age=300");
     return res.status(200).json({ skills });
   } catch (error) {
-    console.error("getSkills failed:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return sendServerError(res, error, "getSkills failed");
   }
 }
 
@@ -22,7 +22,6 @@ export async function getCategories(req, res) {
     res.set("Cache-Control", "public, max-age=300");
     return res.status(200).json({ categories });
   } catch (error) {
-    console.error("getCategories failed:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return sendServerError(res, error, "getCategories failed");
   }
 }

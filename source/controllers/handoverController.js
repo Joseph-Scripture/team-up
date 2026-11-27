@@ -7,6 +7,7 @@ import {
   cancelHandover,
   HandoverError,
 } from "../services/handoverService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 function handleError(res, error) {
   if (error instanceof HandoverError) {
@@ -16,8 +17,7 @@ function handleError(res, error) {
   if (error.code === "P2002") {
     return res.status(409).json({ message: "Duplicate handover request" });
   }
-  console.error("handover operation failed:", error);
-  return res.status(500).json({ message: "Internal server error" });
+  return sendServerError(res, error, "handover operation failed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

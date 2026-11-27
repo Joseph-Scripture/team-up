@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import config from "../../config.js";
 import { getValidSession } from "../services/sessionService.js";
+import { sendServerError } from "../lib/dbErrors.js";
 
 export async function authenticate(req, res, next) {
   const [scheme, token] = (req.headers.authorization ?? "").split(" ");
@@ -36,8 +37,7 @@ export async function authenticate(req, res, next) {
     req.sessionId = payload.sid;
     return next();
   } catch (error) {
-    console.error("authenticate failed:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return sendServerError(res, error, "authenticate failed");
   }
 }
 

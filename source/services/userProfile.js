@@ -3,6 +3,7 @@ import { resolveVisibility } from "./profileVisibilityService.js";
 import { deleteCloudinaryAsset } from "./uploadService.js";
 import { createNotification } from "./notificationService.js";
 import { CacheKey, cacheDel, cacheDelPattern } from "../lib/cache.js";
+import { invalidateProjectsMine } from "./projectService.js";
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -474,6 +475,16 @@ export async function deleteUserProfile(userId) {
     ...memberships.ownershipTransfers.map((t) => CacheKey.project(t.projectId)),
   );
   await cacheDelPattern("projects:recommended:*");
+
+  // Everybody still on those projects has a My Projects list that embeds the
+  // owner, and the new owners' lists now include the transferred projects —
+  // so refresh them all.
+  await Promise.all(
+    [
+      ...memberships.activeMemberships.map((m) => m.project.id),
+      ...memberships.ownershipTransfers.map((t) => t.projectId),
+    ].map((projectId) => invalidateProjectsMine(projectId)),
+  );
 
   // 12. Best-effort Cloudinary cleanup — runs outside the transaction so a
   //    Cloudinary failure never rolls back the deletion.

@@ -1,5 +1,6 @@
 import prisma from "../db/client.js";
 import { createNotification } from "./notificationService.js";
+import { cacheDel, CacheKey } from "../lib/cache.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -562,6 +563,9 @@ export async function confirmJoinRequest(requesterId, requestId) {
     membershipId:  membership.id,
     ownerId:       request.project.ownerId,
   });
+
+  // The new member's My Projects list must show the project immediately.
+  await cacheDel(CacheKey.projectsMine(requesterId));
 
   return {
     message:      "Commitment confirmed. You are now a member of the project.",

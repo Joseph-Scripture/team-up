@@ -1,10 +1,26 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../src/generated/prisma/client.ts";
+import { warmUpConnection } from "../lib/dbErrors.js";
 
-const adapter = new PrismaPg({
+// pg.Pool options — PrismaPg passes this config straight to `new pg.Pool()`.
+// Both values exist because the database is remote (Neon, eu-west-2) behind
+// a link where a fresh TLS handshake takes 1–12s and can be reset mid-flight:
+//
+// - idleTimeoutMillis: pg's default is 10_000, so every request after 10s of
+//   quiet paid a brand-new multi-second handshake — and a handshake that got
+//   reset surfaced as ECONNRESET → HTTP 500. Keeping connections warm for 60s
+//   makes steady traffic reuse the pool instead of re-dialing.
+// - connectionTimeoutMillis: pg's default is 0 = wait forever, which made
+//   requests hang until the frontend timed out. Fail after 15s instead so the
+//   error handler can answer 503 (with Retry-After) rather than hanging.
+export const poolConfig = {
   connectionString: process.env.DATABASE_URL,
-});
+  idleTimeoutMillis: 60_000,
+  connectionTimeoutMillis: 15_000,
+};
+
+const adapter = new PrismaPg(poolConfig);
 
 const prisma = new PrismaClient({
   adapter,
@@ -20,3 +36,16 @@ const prisma = new PrismaClient({
   },
 });
 export default prisma;
+
+/**
+ * Pre-open a pooled connection so the first user request doesn't pay the
+ * multi-second TLS handshake, and so a dead link is reported at boot.
+ * Never throws and never blocks startup: resolves `false` when the database
+ * is unreachable (the API still serves /health and answers 503 elsewhere).
+ *
+ * @param {{ retries?: number, delays?: number[] }} [options]
+ * @returns {Promise<boolean>}
+ */
+export function warmUpPool(options) {
+  return warmUpConnection(() => prisma.$queryRaw`SELECT 1`, options);
+}
